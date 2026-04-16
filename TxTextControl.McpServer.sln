@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 18
+VisualStudioVersion = 18.2.11430.68 d18.0
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TxTextControl.McpServer", "TxTextControl.McpServer.csproj", "{33456370-D9D8-F77E-35DF-D150710C49B9}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{33456370-D9D8-F77E-35DF-D150710C49B9}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{33456370-D9D8-F77E-35DF-D150710C49B9}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{33456370-D9D8-F77E-35DF-D150710C49B9}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{33456370-D9D8-F77E-35DF-D150710C49B9}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {E505A79E-24A6-4DAE-9C46-D51E6E3E7F89}
+	EndGlobalSection
+EndGlobal
