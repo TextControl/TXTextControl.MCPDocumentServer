@@ -14,13 +14,13 @@ public sealed class FormatTextRequest
     public int? ParagraphIndex { get; set; }
 
     [JsonPropertyName("bold")]
-    public bool Bold { get; set; }
+    public bool? Bold { get; set; }
 
     [JsonPropertyName("italic")]
-    public bool Italic { get; set; }
+    public bool? Italic { get; set; }
 
     [JsonPropertyName("underline")]
-    public bool Underline { get; set; }
+    public bool? Underline { get; set; }
 
     [JsonPropertyName("color_hex")]
     public string? ColorHex { get; set; }

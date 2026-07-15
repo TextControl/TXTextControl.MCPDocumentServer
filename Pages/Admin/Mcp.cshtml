@@ -1,0 +1,95 @@
+@page "/admin/mcp"
+@model TxTextControl.McpServer.Pages.Admin.McpModel
+@{
+    Layout = null;
+}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MCP Endpoint - TX MCP Admin</title>
+    <style>
+        body {
+            margin: 0;
+            background: #f6f8fb;
+            color: #172033;
+            font-family: Arial, Helvetica, sans-serif;
+        }
+
+        .shell {
+            max-width: 980px;
+            margin: 0 auto;
+            padding: 34px 24px;
+        }
+
+        a {
+            color: #0f766e;
+            font-weight: 700;
+            text-decoration: none;
+        }
+
+        .panel {
+            background: #fff;
+            border: 1px solid #d9e0ea;
+            border-radius: 8px;
+            box-shadow: 0 18px 45px rgba(16, 24, 40, .08);
+            padding: 24px;
+        }
+
+        h1 {
+            margin: 0 0 10px;
+            font-size: 30px;
+            letter-spacing: 0;
+        }
+
+        p {
+            color: #667085;
+            line-height: 1.5;
+        }
+
+        code {
+            display: inline-block;
+            background: #eef2f7;
+            border-radius: 6px;
+            padding: 3px 6px;
+            font-family: Consolas, "Courier New", monospace;
+        }
+
+        .endpoint {
+            margin: 18px 0;
+            padding: 16px;
+            border-radius: 8px;
+            background: #eef6f5;
+            border: 1px solid #99d6cf;
+            color: #115e59;
+            font-size: 16px;
+            overflow-wrap: anywhere;
+        }
+
+        .method {
+            display: inline-flex;
+            align-items: center;
+            min-height: 26px;
+            padding: 3px 10px;
+            border-radius: 999px;
+            background: #0f766e;
+            color: #fff;
+            font-weight: 800;
+            margin-right: 8px;
+        }
+    </style>
+    <link rel="stylesheet" href="/css/mcp-admin.css" />
+</head>
+<body>
+    <main class="shell">
+        <p><a href="/admin">Back to Automation</a> &nbsp; <a href="/admin/logout">Logout</a></p>
+        <section class="panel">
+            <h1>MCP Endpoint</h1>
+            <p>This endpoint is for MCP clients, not for direct browser navigation. A browser opens it with <code>GET</code>, so the server correctly returns <code>405 Method Not Allowed</code>.</p>
+            <div class="endpoint"><span class="method">POST</span>@Model.EndpointUrl</div>
+            <p>Use this URL in an MCP client configuration. When running from Visual Studio, the HTTPS launch profile uses <code>https://localhost:58506</code>; when started from the shell in this task, the server is usually on <code>http://localhost:5000</code>.</p>
+        </section>
+    </main>
+</body>
+</html>

@@ -1,0 +1,930 @@
+@page "/admin/styles"
+@model TxTextControl.McpServer.Pages.Admin.StylesModel
+@{
+    Layout = null;
+    var namedParagraphPresets = Model.ParagraphPresets
+        .Select((preset, index) => new { Preset = preset, Index = index })
+        .Where(item => !string.IsNullOrWhiteSpace(item.Preset.Name))
+        .ToList();
+    var namedTablePresets = Model.TablePresets
+        .Select((preset, index) => new { Preset = preset, Index = index })
+        .Where(item => !string.IsNullOrWhiteSpace(item.Preset.Name))
+        .ToList();
+    var newParagraphIndex = Model.ParagraphPresets.Count - 1;
+    var newTableIndex = Model.TablePresets.Count - 1;
+}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Style Presets - TX MCP Admin</title>
+    <style>
+        :root {
+            --bg: #f6f8fb;
+            --panel: #ffffff;
+            --ink: #172033;
+            --muted: #667085;
+            --line: #d9e0ea;
+            --brand: #0f766e;
+            --brand-strong: #115e59;
+            --danger: #b42318;
+            --shadow: 0 18px 45px rgba(16, 24, 40, .08);
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--ink);
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 15px;
+        }
+
+        .shell {
+            min-height: 100vh;
+            display: grid;
+            grid-template-columns: 280px minmax(0, 1fr);
+        }
+
+        aside {
+            background: #172033;
+            color: #fff;
+            padding: 28px 24px;
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 34px;
+        }
+
+        .brand-logo {
+            width: 52px;
+            height: 40px;
+            object-fit: contain;
+            border-radius: 8px;
+            background: #fff;
+            padding: 5px;
+        }
+
+        .brand strong,
+        .brand span {
+            display: block;
+        }
+
+        .brand span {
+            color: #a8b3c7;
+            font-size: 12px;
+            margin-top: 2px;
+        }
+
+        nav a {
+            display: block;
+            color: #d6deea;
+            text-decoration: none;
+            padding: 10px 12px;
+            border-radius: 8px;
+            margin-bottom: 6px;
+        }
+
+        nav a.active {
+            background: rgba(255, 255, 255, .12);
+            color: #fff;
+        }
+
+        main { padding: 28px; }
+
+        .topbar {
+            display: flex;
+            justify-content: space-between;
+            gap: 18px;
+            align-items: flex-start;
+            margin-bottom: 22px;
+        }
+
+        .top-logo {
+            width: 54px;
+            height: 40px;
+            object-fit: contain;
+            margin-bottom: 10px;
+        }
+
+        h1 {
+            font-size: 30px;
+            line-height: 1.1;
+            margin: 0 0 8px;
+            letter-spacing: 0;
+        }
+
+        h2 {
+            font-size: 18px;
+            margin: 0;
+        }
+
+        .subtle {
+            color: var(--muted);
+            margin: 0;
+            max-width: 780px;
+        }
+
+        .actions {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        button,
+        .button {
+            border: 1px solid transparent;
+            border-radius: 8px;
+            padding: 10px 14px;
+            font: inherit;
+            font-weight: 700;
+            cursor: pointer;
+            text-decoration: none;
+            white-space: nowrap;
+        }
+
+        button.primary {
+            background: var(--brand);
+            color: #fff;
+        }
+
+        button.primary:hover { background: var(--brand-strong); }
+
+        .button {
+            border-color: var(--line);
+            color: var(--ink);
+            background: #fff;
+        }
+
+        .button.danger {
+            color: var(--danger);
+        }
+
+        .notice {
+            background: #ecfdf3;
+            border: 1px solid #abefc6;
+            color: #067647;
+            border-radius: 8px;
+            padding: 12px 14px;
+            margin-bottom: 18px;
+            font-weight: 700;
+        }
+
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            box-shadow: var(--shadow);
+            margin-bottom: 18px;
+            overflow: hidden;
+        }
+
+        .panel-header {
+            padding: 18px 20px;
+            border-bottom: 1px solid var(--line);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 14px;
+        }
+
+        .panel-header p {
+            margin: 4px 0 0;
+            color: var(--muted);
+        }
+
+        .role-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 16px;
+            align-items: end;
+            padding: 18px 20px;
+            border-bottom: 1px solid var(--line);
+            background: #f8fafc;
+        }
+
+        .table-wrap {
+            overflow-x: auto;
+        }
+
+        .summary-table {
+            width: 100%;
+            min-width: 920px;
+            border-collapse: collapse;
+        }
+
+        .summary-table th,
+        .summary-table td {
+            padding: 12px 14px;
+            border-bottom: 1px solid var(--line);
+            text-align: left;
+            vertical-align: top;
+        }
+
+        .summary-table th {
+            color: #344054;
+            font-size: 12px;
+            text-transform: uppercase;
+            background: #f8fafc;
+            letter-spacing: .02em;
+        }
+
+        .summary-table tr:last-child td {
+            border-bottom: 0;
+        }
+
+        .summary-title {
+            font-weight: 800;
+            margin-bottom: 6px;
+        }
+
+        .summary-stack {
+            display: grid;
+            gap: 4px;
+            color: #344054;
+        }
+
+        .summary-muted {
+            color: var(--muted);
+        }
+
+        .role-badges {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+
+        .role-badge,
+        .format-pill {
+            display: inline-flex;
+            align-items: center;
+            border-radius: 999px;
+            padding: 3px 8px;
+            font-size: 12px;
+            font-weight: 800;
+        }
+
+        .role-badge {
+            background: #e6fffb;
+            color: #0f766e;
+        }
+
+        .format-pill {
+            background: #eef4ff;
+            color: #175cd3;
+        }
+
+        .format-pill.italic {
+            font-style: italic;
+        }
+
+        .format-pill.underline {
+            text-decoration: underline;
+        }
+
+        .format-pill.normal {
+            background: #f2f4f7;
+            color: var(--muted);
+        }
+
+        .swatch-line {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+        }
+
+        .swatch {
+            width: 18px;
+            height: 18px;
+            border-radius: 5px;
+            border: 1px solid var(--line);
+            background: var(--swatch-color, transparent);
+            flex: 0 0 auto;
+        }
+
+        label {
+            display: block;
+            color: var(--muted);
+            font-size: 12px;
+            font-weight: 700;
+            margin-bottom: 6px;
+            text-transform: uppercase;
+        }
+
+        input,
+        select {
+            width: 100%;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            padding: 9px 10px;
+            font: inherit;
+            background: #fff;
+            color: var(--ink);
+        }
+
+        input[type="color"] {
+            height: 40px;
+            padding: 4px;
+        }
+
+        input[type="checkbox"] {
+            width: auto;
+        }
+
+        .fields {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 12px;
+        }
+
+        .wide { grid-column: span 2; }
+
+        .toggles {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            flex-wrap: wrap;
+            margin-top: 14px;
+        }
+
+        .toggles label,
+        .delete {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            margin: 0;
+            text-transform: none;
+            font-size: 13px;
+        }
+
+        .toggles label {
+            color: var(--ink);
+        }
+
+        .delete {
+            color: var(--danger);
+            font-weight: 700;
+        }
+
+        dialog.modal {
+            width: min(920px, calc(100vw - 32px));
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            padding: 0;
+            box-shadow: 0 26px 70px rgba(16, 24, 40, .22);
+        }
+
+        dialog.modal::backdrop {
+            background: rgba(23, 32, 51, .48);
+        }
+
+        .modal-header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 18px;
+            padding: 18px 20px;
+            border-bottom: 1px solid var(--line);
+            background: #f8fafc;
+        }
+
+        .modal-header p {
+            margin: 4px 0 0;
+            color: var(--muted);
+        }
+
+        .modal-body {
+            padding: 20px;
+        }
+
+        .modal-actions {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            align-items: center;
+            padding: 14px 20px;
+            border-top: 1px solid var(--line);
+            background: #fff;
+        }
+
+        .empty-state {
+            padding: 22px 20px;
+            color: var(--muted);
+        }
+
+        .footer-actions {
+            position: sticky;
+            bottom: 0;
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            align-items: center;
+            padding: 14px 20px;
+            background: rgba(246, 248, 251, .92);
+            border-top: 1px solid var(--line);
+            backdrop-filter: blur(10px);
+        }
+
+        @@media (max-width: 1100px) {
+            .role-grid,
+            .fields {
+                grid-template-columns: 1fr 1fr;
+            }
+
+            .wide { grid-column: span 2; }
+        }
+
+        @@media (max-width: 980px) {
+            .shell { grid-template-columns: 1fr; }
+            aside { display: none; }
+            .topbar,
+            .footer-actions {
+                flex-direction: column;
+                align-items: stretch;
+            }
+        }
+
+        @@media (max-width: 720px) {
+            main { padding: 18px; }
+            .role-grid,
+            .fields {
+                grid-template-columns: 1fr;
+            }
+
+            .wide { grid-column: span 1; }
+            .panel-header,
+            .modal-header,
+            .modal-actions {
+                flex-direction: column;
+                align-items: stretch;
+            }
+        }
+    </style>
+    <link rel="stylesheet" href="/css/mcp-admin.css" />
+</head>
+<body>
+    <div class="shell">
+        <aside>
+            <div class="brand">
+                <img class="brand-logo" src="/assets/tx-text-control-dotnet-server.svg" alt="TX Text Control .NET Server" />
+                <div>
+                    <strong>MCP Document Server</strong>
+                    <span>Beta 1 admin</span>
+                </div>
+            </div>
+            <nav aria-label="Admin navigation">
+                <a href="/admin">Automation</a>
+                <a class="active" href="/admin/styles">Style Presets</a>
+                <a href="/admin/automation">Raw JSON</a>
+                <a href="/admin/mcp">MCP endpoint</a>
+                <a href="/admin/logout">Logout</a>
+            </nav>
+        </aside>
+        <main>
+            <form method="post">
+                <div class="topbar">
+                    <div>
+                        <img class="top-logo" src="/assets/tx-text-control-dotnet-server.svg" alt="TX Text Control .NET Server" />
+                        <h1>Style Presets</h1>
+                        <p class="subtle">Manage the named paragraph and table presets that AI clients can use in document operations.</p>
+                    </div>
+                    <div class="actions">
+                        <a class="button" href="/admin">Automation</a>
+                        <button class="primary" type="submit">Save Presets</button>
+                    </div>
+                </div>
+
+                @if (!string.IsNullOrWhiteSpace(Model.StatusMessage))
+                {
+                    <div class="notice">@Model.StatusMessage</div>
+                }
+
+                <section class="panel">
+                    <div class="panel-header">
+                        <div>
+                            <h2>Paragraph Presets</h2>
+                            <p>Semantic roles tell AI clients which preset to use for titles, headings, and body text.</p>
+                        </div>
+                        <button class="primary" type="button" data-open-dialog="paragraph-preset-@newParagraphIndex">Add Paragraph Style</button>
+                    </div>
+                    <div class="role-grid">
+                        <div>
+                            <label asp-for="StyleRoles.Title">Title role</label>
+                            <select asp-for="StyleRoles.Title">
+                                @foreach (var preset in namedParagraphPresets.Select(item => item.Preset))
+                                {
+                                    <option value="@preset.Name">@preset.Name</option>
+                                }
+                            </select>
+                        </div>
+                        <div>
+                            <label asp-for="StyleRoles.Heading1">Heading 1 role</label>
+                            <select asp-for="StyleRoles.Heading1">
+                                @foreach (var preset in namedParagraphPresets.Select(item => item.Preset))
+                                {
+                                    <option value="@preset.Name">@preset.Name</option>
+                                }
+                            </select>
+                        </div>
+                        <div>
+                            <label asp-for="StyleRoles.Heading2">Heading 2 role</label>
+                            <select asp-for="StyleRoles.Heading2">
+                                @foreach (var preset in namedParagraphPresets.Select(item => item.Preset))
+                                {
+                                    <option value="@preset.Name">@preset.Name</option>
+                                }
+                            </select>
+                        </div>
+                        <div>
+                            <label asp-for="StyleRoles.Body">Body role</label>
+                            <select asp-for="StyleRoles.Body">
+                                @foreach (var preset in namedParagraphPresets.Select(item => item.Preset))
+                                {
+                                    <option value="@preset.Name">@preset.Name</option>
+                                }
+                            </select>
+                            <input asp-for="DefaultParagraphStyleName" type="hidden" value="@Model.StyleRoles.Body" />
+                        </div>
+                    </div>
+
+                    @if (namedParagraphPresets.Count == 0)
+                    {
+                        <div class="empty-state">No paragraph presets configured yet.</div>
+                    }
+                    else
+                    {
+                        <div class="table-wrap">
+                            <table class="summary-table">
+                                <thead>
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>Font</th>
+                                        <th>Emphasis</th>
+                                        <th>Color</th>
+                                        <th>Spacing</th>
+                                        <th>Alignment</th>
+                                        <th>Roles</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var item in namedParagraphPresets)
+                                    {
+                                        var preset = item.Preset;
+                                        var index = item.Index;
+                                        var hasEmphasis = preset.Bold || preset.Italic || preset.Underline;
+                                        var hasRoles = Model.StyleRoles.Title == preset.Name
+                                            || Model.StyleRoles.Heading1 == preset.Name
+                                            || Model.StyleRoles.Heading2 == preset.Name
+                                            || Model.StyleRoles.Body == preset.Name;
+                                        <tr>
+                                            <td>
+                                                <div class="summary-title">@preset.Name</div>
+                                            </td>
+                                            <td>
+                                                <div class="summary-stack">
+                                                    <span>@(preset.FontName ?? "Default")</span>
+                                                    <span class="summary-muted">@(preset.FontSize?.ToString("0.#") ?? "-") @preset.FontSizeUnit</span>
+                                                </div>
+                                            </td>
+                                            <td>
+                                                <div class="role-badges">
+                                                    @if (preset.Bold) { <span class="format-pill">Bold</span> }
+                                                    @if (preset.Italic) { <span class="format-pill italic">Italic</span> }
+                                                    @if (preset.Underline) { <span class="format-pill underline">Underline</span> }
+                                                    @if (!hasEmphasis) { <span class="format-pill normal">Normal</span> }
+                                                </div>
+                                            </td>
+                                            <td>
+                                                <span class="swatch-line">
+                                                    <span class="swatch" style="--swatch-color: @(preset.ColorHex ?? "transparent")"></span>
+                                                    <span>@(preset.ColorHex ?? "Default")</span>
+                                                </span>
+                                            </td>
+                                            <td>
+                                                <div class="summary-stack">
+                                                    <span>Before @(preset.SpaceBefore?.ToString("0.#") ?? "0") @preset.ParagraphUnit</span>
+                                                    <span>After @(preset.SpaceAfter?.ToString("0.#") ?? "0") @preset.ParagraphUnit</span>
+                                                </div>
+                                            </td>
+                                            <td>@(preset.Alignment ?? "Default")</td>
+                                            <td>
+                                                @if (hasRoles)
+                                                {
+                                                    <div class="role-badges">
+                                                        @if (Model.StyleRoles.Title == preset.Name) { <span class="role-badge">Title</span> }
+                                                        @if (Model.StyleRoles.Heading1 == preset.Name) { <span class="role-badge">Heading 1</span> }
+                                                        @if (Model.StyleRoles.Heading2 == preset.Name) { <span class="role-badge">Heading 2</span> }
+                                                        @if (Model.StyleRoles.Body == preset.Name) { <span class="role-badge">Body</span> }
+                                                    </div>
+                                                }
+                                                else
+                                                {
+                                                    <span class="summary-muted">None</span>
+                                                }
+                                            </td>
+                                            <td>
+                                                <button class="button" type="button" data-open-dialog="paragraph-preset-@index">Edit</button>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </section>
+
+                <section class="panel">
+                    <div class="panel-header">
+                        <div>
+                            <h2>Table Presets</h2>
+                            <p>These presets expand into TX cell formatting for headers, body rows, alternating rows, and borders.</p>
+                        </div>
+                        <button class="primary" type="button" data-open-dialog="table-preset-@newTableIndex">Add Table Style</button>
+                    </div>
+
+                    @if (namedTablePresets.Count == 0)
+                    {
+                        <div class="empty-state">No table presets configured yet.</div>
+                    }
+                    else
+                    {
+                        <div class="table-wrap">
+                            <table class="summary-table">
+                                <thead>
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>Header</th>
+                                        <th>Body</th>
+                                        <th>Alternating Row</th>
+                                        <th>Border</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var item in namedTablePresets)
+                                    {
+                                        var preset = item.Preset;
+                                        var index = item.Index;
+                                        <tr>
+                                            <td>
+                                                <div class="summary-title">@preset.Name</div>
+                                                <span class="summary-muted">Header row @preset.HeaderRowIndex</span>
+                                            </td>
+                                            <td>
+                                                <div class="summary-stack">
+                                                    <span class="swatch-line"><span class="swatch" style="--swatch-color: @(preset.HeaderBackground ?? "transparent")"></span> Background @(preset.HeaderBackground ?? "Default")</span>
+                                                    <span class="swatch-line"><span class="swatch" style="--swatch-color: @(preset.HeaderTextColor ?? "transparent")"></span> Text @(preset.HeaderTextColor ?? "Default")</span>
+                                                    <span>@(preset.HeaderFontName ?? "Default") @(preset.HeaderFontSize?.ToString("0.#") ?? "-") pt@(preset.HeaderBold ? ", bold" : "")</span>
+                                                </div>
+                                            </td>
+                                            <td>
+                                                <div class="summary-stack">
+                                                    <span class="swatch-line"><span class="swatch" style="--swatch-color: @(preset.BodyBackground ?? "transparent")"></span> Background @(preset.BodyBackground ?? "Default")</span>
+                                                    <span class="swatch-line"><span class="swatch" style="--swatch-color: @(preset.BodyTextColor ?? "transparent")"></span> Text @(preset.BodyTextColor ?? "Default")</span>
+                                                    <span>@(preset.BodyFontName ?? "Default") @(preset.BodyFontSize?.ToString("0.#") ?? "-") pt</span>
+                                                </div>
+                                            </td>
+                                            <td>
+                                                <span class="swatch-line">
+                                                    <span class="swatch" style="--swatch-color: @(preset.AlternatingBackground ?? "transparent")"></span>
+                                                    <span>@(preset.AlternatingBackground ?? "Default")</span>
+                                                </span>
+                                            </td>
+                                            <td>
+                                                <div class="summary-stack">
+                                                    <span>@(preset.BorderWidth?.ToString() ?? "Default") twips</span>
+                                                    <span class="swatch-line"><span class="swatch" style="--swatch-color: @(preset.BorderColor ?? "transparent")"></span> @(preset.BorderColor ?? "Default")</span>
+                                                </div>
+                                            </td>
+                                            <td>
+                                                <button class="button" type="button" data-open-dialog="table-preset-@index">Edit</button>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </section>
+
+                @for (var i = 0; i < Model.ParagraphPresets.Count; i++)
+                {
+                    var title = string.IsNullOrWhiteSpace(Model.ParagraphPresets[i].Name)
+                        ? "New Paragraph Style"
+                        : $"Edit {Model.ParagraphPresets[i].Name}";
+                    <dialog class="modal" id="paragraph-preset-@i">
+                        <div class="modal-header">
+                            <div>
+                                <h2>@title</h2>
+                                <p>Define text formatting, paragraph spacing, and alignment for this preset.</p>
+                            </div>
+                            <button class="button" type="button" data-close-dialog>Close</button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="fields">
+                                <div class="wide">
+                                    <label asp-for="ParagraphPresets[i].Name">Name</label>
+                                    <input asp-for="ParagraphPresets[i].Name" placeholder="New paragraph style" />
+                                </div>
+                                <div class="wide">
+                                    <label asp-for="ParagraphPresets[i].FontName">Font</label>
+                                    <select asp-for="ParagraphPresets[i].FontName">
+                                        <option value="">Default</option>
+                                        @foreach (var font in Model.SupportedFonts)
+                                        {
+                                            <option value="@font">@font</option>
+                                        }
+                                    </select>
+                                </div>
+                                <div>
+                                    <label asp-for="ParagraphPresets[i].FontSize">Size</label>
+                                    <input asp-for="ParagraphPresets[i].FontSize" type="number" step="0.5" min="1" />
+                                </div>
+                                <div>
+                                    <label asp-for="ParagraphPresets[i].FontSizeUnit">Unit</label>
+                                    <select asp-for="ParagraphPresets[i].FontSizeUnit">
+                                        <option value="pt">pt</option>
+                                        <option value="px">px</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label asp-for="ParagraphPresets[i].ColorHex">Color</label>
+                                    <input asp-for="ParagraphPresets[i].ColorHex" type="color" />
+                                </div>
+                                <div>
+                                    <label asp-for="ParagraphPresets[i].SpaceBefore">Before</label>
+                                    <input asp-for="ParagraphPresets[i].SpaceBefore" type="number" step="0.5" min="0" />
+                                </div>
+                                <div>
+                                    <label asp-for="ParagraphPresets[i].SpaceAfter">After</label>
+                                    <input asp-for="ParagraphPresets[i].SpaceAfter" type="number" step="0.5" min="0" />
+                                </div>
+                                <div>
+                                    <label asp-for="ParagraphPresets[i].ParagraphUnit">Spacing unit</label>
+                                    <select asp-for="ParagraphPresets[i].ParagraphUnit">
+                                        <option value="pt">pt</option>
+                                        <option value="px">px</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label asp-for="ParagraphPresets[i].Alignment">Align</label>
+                                    <select asp-for="ParagraphPresets[i].Alignment">
+                                        <option value="">Default</option>
+                                        <option value="left">Left</option>
+                                        <option value="right">Right</option>
+                                        <option value="center">Center</option>
+                                        <option value="justify">Justify</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="toggles">
+                                <label><input asp-for="ParagraphPresets[i].Bold" /> Bold</label>
+                                <label><input asp-for="ParagraphPresets[i].Italic" /> Italic</label>
+                                <label><input asp-for="ParagraphPresets[i].Underline" /> Underline</label>
+                            </div>
+                        </div>
+                        <div class="modal-actions">
+                            <label class="delete">
+                                <input asp-for="ParagraphPresets[i].Delete" />
+                                Delete this preset on save
+                            </label>
+                            <div class="actions">
+                                <button class="button" type="button" data-close-dialog>Done</button>
+                                <button class="primary" type="submit">Save Presets</button>
+                            </div>
+                        </div>
+                    </dialog>
+                }
+
+                @for (var i = 0; i < Model.TablePresets.Count; i++)
+                {
+                    var title = string.IsNullOrWhiteSpace(Model.TablePresets[i].Name)
+                        ? "New Table Style"
+                        : $"Edit {Model.TablePresets[i].Name}";
+                    <dialog class="modal" id="table-preset-@i">
+                        <div class="modal-header">
+                            <div>
+                                <h2>@title</h2>
+                                <p>Define header rows, body rows, alternating row backgrounds, and border defaults.</p>
+                            </div>
+                            <button class="button" type="button" data-close-dialog>Close</button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="fields">
+                                <div class="wide">
+                                    <label asp-for="TablePresets[i].Name">Name</label>
+                                    <input asp-for="TablePresets[i].Name" placeholder="New table style" />
+                                </div>
+                                <div>
+                                    <label asp-for="TablePresets[i].HeaderRowIndex">Header row</label>
+                                    <input asp-for="TablePresets[i].HeaderRowIndex" type="number" min="0" />
+                                </div>
+                                <div>
+                                    <label asp-for="TablePresets[i].HeaderBackground">Header bg</label>
+                                    <input asp-for="TablePresets[i].HeaderBackground" type="color" />
+                                </div>
+                                <div>
+                                    <label asp-for="TablePresets[i].HeaderTextColor">Header text</label>
+                                    <input asp-for="TablePresets[i].HeaderTextColor" type="color" />
+                                </div>
+                                <div class="wide">
+                                    <label asp-for="TablePresets[i].HeaderFontName">Header font</label>
+                                    <select asp-for="TablePresets[i].HeaderFontName">
+                                        <option value="">Default</option>
+                                        @foreach (var font in Model.SupportedFonts)
+                                        {
+                                            <option value="@font">@font</option>
+                                        }
+                                    </select>
+                                </div>
+                                <div>
+                                    <label asp-for="TablePresets[i].HeaderFontSize">Header size</label>
+                                    <input asp-for="TablePresets[i].HeaderFontSize" type="number" step="0.5" min="1" />
+                                </div>
+                                <div>
+                                    <label asp-for="TablePresets[i].BodyBackground">Body bg</label>
+                                    <input asp-for="TablePresets[i].BodyBackground" type="color" />
+                                </div>
+                                <div>
+                                    <label asp-for="TablePresets[i].BodyTextColor">Body text</label>
+                                    <input asp-for="TablePresets[i].BodyTextColor" type="color" />
+                                </div>
+                                <div class="wide">
+                                    <label asp-for="TablePresets[i].BodyFontName">Body font</label>
+                                    <select asp-for="TablePresets[i].BodyFontName">
+                                        <option value="">Default</option>
+                                        @foreach (var font in Model.SupportedFonts)
+                                        {
+                                            <option value="@font">@font</option>
+                                        }
+                                    </select>
+                                </div>
+                                <div>
+                                    <label asp-for="TablePresets[i].BodyFontSize">Body size</label>
+                                    <input asp-for="TablePresets[i].BodyFontSize" type="number" step="0.5" min="1" />
+                                </div>
+                                <div>
+                                    <label asp-for="TablePresets[i].AlternatingBackground">Alt bg</label>
+                                    <input asp-for="TablePresets[i].AlternatingBackground" type="color" />
+                                </div>
+                                <div>
+                                    <label asp-for="TablePresets[i].BorderWidth">Border</label>
+                                    <input asp-for="TablePresets[i].BorderWidth" type="number" step="1" min="0" />
+                                </div>
+                                <div>
+                                    <label asp-for="TablePresets[i].BorderColor">Border color</label>
+                                    <input asp-for="TablePresets[i].BorderColor" type="color" />
+                                </div>
+                            </div>
+                            <div class="toggles">
+                                <label><input asp-for="TablePresets[i].HeaderBold" /> Header bold</label>
+                            </div>
+                        </div>
+                        <div class="modal-actions">
+                            <label class="delete">
+                                <input asp-for="TablePresets[i].Delete" />
+                                Delete this preset on save
+                            </label>
+                            <div class="actions">
+                                <button class="button" type="button" data-close-dialog>Done</button>
+                                <button class="primary" type="submit">Save Presets</button>
+                            </div>
+                        </div>
+                    </dialog>
+                }
+
+                <div class="footer-actions">
+                    <span class="subtle">Preset changes are written to <code>appsettings.json</code> and used by new MCP operations immediately.</span>
+                    <button class="primary" type="submit">Save Presets</button>
+                </div>
+            </form>
+        </main>
+    </div>
+    <script>
+        document.querySelectorAll('[data-open-dialog]').forEach((button) => {
+            button.addEventListener('click', () => {
+                const dialog = document.getElementById(button.dataset.openDialog);
+                if (dialog && typeof dialog.showModal === 'function') {
+                    dialog.showModal();
+                }
+            });
+        });
+
+        document.querySelectorAll('[data-close-dialog]').forEach((button) => {
+            button.addEventListener('click', () => {
+                const dialog = button.closest('dialog');
+                if (dialog) {
+                    dialog.close();
+                }
+            });
+        });
+    </script>
+</body>
+</html>

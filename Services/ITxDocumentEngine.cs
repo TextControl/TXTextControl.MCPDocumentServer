@@ -14,9 +14,14 @@ public interface ITxDocumentEngine
     DocumentState CreateEmpty(string workingDocumentPath);
     DocumentState LoadFromBase64(string base64Document, string workingDocumentPath);
     string GetAsBase64(string workingDocumentPath, string format);
+    DocumentState ApplyOperations(string workingDocumentPath, DocumentState state, ApplyOperationsRequest request);
     DocumentState FormatText(string workingDocumentPath, FormatTextRequest request);
     IReadOnlyList<string> GetParagraphs(string workingDocumentPath, int? start = null, int? end = null);
     IReadOnlyList<int> SearchText(string workingDocumentPath, string text = "", bool matchCase = false, bool wholeWord = false);
     IReadOnlyList<SearchTextRange> SearchTextRanges(string workingDocumentPath, string text = "", bool matchCase = false, bool wholeWord = false);
     string GetText(string workingDocumentPath);
+    IReadOnlyList<TemplateMergeFieldInfo> GetTemplateMergeFields(string workingDocumentPath);
+    IReadOnlyList<TemplateMergeBlockInfo> GetTemplateMergeBlocks(string workingDocumentPath);
+    IReadOnlyList<TemplateFormFieldInfo> GetTemplateFormFields(string workingDocumentPath);
+    DocumentState MergeTemplate(string workingDocumentPath, DocumentState state, MergeTemplateRequest request);
 }

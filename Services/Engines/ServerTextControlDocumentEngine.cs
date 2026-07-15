@@ -3,7 +3,10 @@ using System.IO;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using Microsoft.Extensions.Options;
 using TxTextControl.McpServer.Models;
+using TxTextControl.McpServer.Options;
+using TxTextControl.McpServer.Services.Operations;
 using TXTextControl;
 using TXTextControl.Markdown;
 
@@ -15,6 +18,18 @@ namespace TxTextControl.McpServer.Services;
 /// </summary>
 public sealed partial class ServerTextControlDocumentEngine : ITxDocumentEngine
 {
+    private readonly DocumentOperationRegistry _operationRegistry;
+    private readonly DocumentAutomationOptions _automationOptions;
+
+    public ServerTextControlDocumentEngine(
+        DocumentOperationRegistry operationRegistry,
+        IOptions<DocumentAutomationOptions> automationOptions)
+    {
+        TxTextControlLicensing.Configure();
+        _operationRegistry = operationRegistry;
+        _automationOptions = automationOptions.Value;
+    }
+
     private enum DocType
     {
         WordprocessingML = 0,
@@ -48,7 +63,7 @@ public sealed partial class ServerTextControlDocumentEngine : ITxDocumentEngine
     {
         EnsureDirectory(workingDocumentPath);
 
-        using (var tx = new ServerTextControl())
+        using (var tx = CreateServerTextControl())
         {
             tx.Create();
             tx.Save(workingDocumentPath, StreamType.InternalUnicodeFormat);
@@ -56,7 +71,8 @@ public sealed partial class ServerTextControlDocumentEngine : ITxDocumentEngine
 
         return new DocumentState
         {
-            WorkingDocumentPath = workingDocumentPath
+            WorkingDocumentPath = workingDocumentPath,
+            Document = CreateNeutralDocument()
         };
     }
 
@@ -86,7 +102,7 @@ public sealed partial class ServerTextControlDocumentEngine : ITxDocumentEngine
             throw new InvalidOperationException("The provided content is not valid base64.", ex);
         }
 
-        using (var tx = new ServerTextControl())
+        using (var tx = CreateServerTextControl())
         {
             tx.Create();
 
@@ -101,7 +117,8 @@ public sealed partial class ServerTextControlDocumentEngine : ITxDocumentEngine
 
                     return new DocumentState
                     {
-                        WorkingDocumentPath = workingDocumentPath
+                        WorkingDocumentPath = workingDocumentPath,
+                        Document = CreateNeutralDocument()
                     };
                 }
                 catch
@@ -123,9 +140,23 @@ public sealed partial class ServerTextControlDocumentEngine : ITxDocumentEngine
 
         return new DocumentState
         {
-            WorkingDocumentPath = workingDocumentPath
+            WorkingDocumentPath = workingDocumentPath,
+            Document = CreateNeutralDocument()
         };
     }
+
+    private static Models.DocumentModel.Document CreateNeutralDocument()
+        => new()
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            Sections =
+            [
+                new Models.DocumentModel.Section
+                {
+                    Id = Guid.NewGuid().ToString("N")
+                }
+            ]
+        };
 
     public string GetAsBase64(string workingDocumentPath, string format)
     {
@@ -146,7 +177,7 @@ public sealed partial class ServerTextControlDocumentEngine : ITxDocumentEngine
 
         var normalizedFormat = format.Trim().ToLowerInvariant();
 
-        using (var tx = new ServerTextControl())
+        using (var tx = CreateServerTextControl())
         {
             tx.Create();
             tx.Load(workingDocumentPath, StreamType.InternalUnicodeFormat);
@@ -296,5 +327,11 @@ public sealed partial class ServerTextControlDocumentEngine : ITxDocumentEngine
         {
             Directory.CreateDirectory(directory);
         }
+    }
+
+    private static ServerTextControl CreateServerTextControl()
+    {
+        TxTextControlLicensing.Configure();
+        return new ServerTextControl();
     }
 }

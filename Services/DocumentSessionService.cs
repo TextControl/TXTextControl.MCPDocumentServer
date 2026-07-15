@@ -59,7 +59,7 @@ public sealed class DocumentSessionService
 
         var workingDirectory = Path.Combine(_paths.GetSessionsRoot(), sessionId);
         var statePath = Path.Combine(workingDirectory, "document.state.json");
-        var workingDocumentPath = Path.Combine(workingDirectory, "document.docx");
+        var workingDocumentPath = Path.Combine(workingDirectory, "document.tx");
 
         if (!File.Exists(statePath))
         {

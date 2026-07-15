@@ -54,7 +54,7 @@ public sealed partial class ServerTextControlDocumentEngine
             throw new ArgumentException("Both start and length are required when formatting a range.", nameof(request));
         }
 
-        using (var tx = new ServerTextControl())
+        using (var tx = CreateServerTextControl())
         {
             tx.Create();
             tx.Load(workingDocumentPath, StreamType.InternalUnicodeFormat);
@@ -93,9 +93,20 @@ public sealed partial class ServerTextControlDocumentEngine
                 selection = new Selection(start, length);
             }
 
-            selection.Bold = request.Bold;
-            selection.Italic = request.Italic;
-            selection.Underline = request.Underline ? FontUnderlineStyle.Single : FontUnderlineStyle.None;
+            if (request.Bold.HasValue)
+            {
+                selection.Bold = request.Bold.Value;
+            }
+
+            if (request.Italic.HasValue)
+            {
+                selection.Italic = request.Italic.Value;
+            }
+
+            if (request.Underline.HasValue)
+            {
+                selection.Underline = request.Underline.Value ? FontUnderlineStyle.Single : FontUnderlineStyle.None;
+            }
 
             if (!string.IsNullOrWhiteSpace(request.ColorHex))
             {
@@ -145,7 +156,7 @@ public sealed partial class ServerTextControlDocumentEngine
 
         var texts = new List<string>();
 
-        using (var tx = new ServerTextControl())
+        using (var tx = CreateServerTextControl())
         {
             tx.Create();
             tx.Load(workingDocumentPath, StreamType.InternalUnicodeFormat);
@@ -188,7 +199,7 @@ public sealed partial class ServerTextControlDocumentEngine
             return matches;
         }
 
-        using (var tx = new ServerTextControl())
+        using (var tx = CreateServerTextControl())
         {
             tx.Create();
             tx.Load(workingDocumentPath, StreamType.InternalUnicodeFormat);
@@ -255,7 +266,7 @@ public sealed partial class ServerTextControlDocumentEngine
             return ranges;
         }
 
-        using (var tx = new ServerTextControl())
+        using (var tx = CreateServerTextControl())
         {
             tx.Create();
             tx.Load(workingDocumentPath, StreamType.InternalUnicodeFormat);
@@ -308,7 +319,7 @@ public sealed partial class ServerTextControlDocumentEngine
             throw new FileNotFoundException("The working document was not found.", workingDocumentPath);
         }
 
-        using (var tx = new ServerTextControl())
+        using (var tx = CreateServerTextControl())
         {
             tx.Create();
             tx.Load(workingDocumentPath, StreamType.InternalUnicodeFormat);
