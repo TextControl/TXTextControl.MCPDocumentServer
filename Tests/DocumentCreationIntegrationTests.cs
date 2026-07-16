@@ -1099,9 +1099,9 @@ public sealed class DocumentCreationIntegrationTests
         var sessionRoot = Path.Combine(artifactRoot, "sessions", response.SessionId);
         var txPath = Path.Combine(sessionRoot, "document.tx");
 
-        AssertTxTableCellTextFormat(txPath, 32, 1, 1, expectedFontSize: 180, expectedHex: "#000000");
-        AssertTxTableCellTextFormat(txPath, 32, 1, 2, expectedFontSize: 180, expectedHex: "#000000");
-        AssertTxTableCellTextFormat(txPath, 32, 2, 2, expectedFontSize: 180, expectedHex: "#000000");
+        AssertTxTableCellTextFormat(txPath, 32, 1, 1, expectedFontSize: 200, expectedHex: "#FFFFFF", expectedBold: true);
+        AssertTxTableCellTextFormat(txPath, 32, 1, 2, expectedFontSize: 200, expectedHex: "#FFFFFF", expectedBold: true);
+        AssertTxTableCellTextFormat(txPath, 32, 2, 2, expectedFontSize: 200, expectedHex: "#111827");
     }
 
     [SkippableFact]
@@ -2777,7 +2777,7 @@ public sealed class DocumentCreationIntegrationTests
             new FormatParagraphsOperationHandler(),
             new FormatTextOccurrencesOperationHandler(),
             new ReplaceTextOperationHandler(),
-            new AppendTableOperationHandler(),
+            new AppendTableOperationHandler(automationOptions),
             new SetTableCellTextOperationHandler(),
             new FormatTableCellOperationHandler(),
             new FormatTableHeaderRowOperationHandler(),
@@ -2821,7 +2821,10 @@ public sealed class DocumentCreationIntegrationTests
             registry,
             Microsoft.Extensions.Options.Options.Create(automationOptions));
 
-        return new DocumentWorkflowService(sessions, engine);
+        return new DocumentWorkflowService(
+            sessions,
+            engine,
+            Microsoft.Extensions.Options.Options.Create(automationOptions));
     }
 
     private static string GetArtifactRoot()

@@ -33,6 +33,12 @@ public sealed class AuthoringGuideResponse
     [JsonPropertyName("tableStylePresets")]
     public List<TableStylePresetDefinition> TableStylePresets { get; set; } = [];
 
+    [JsonPropertyName("stylePolicy")]
+    public StylePolicyResponse StylePolicy { get; set; } = new();
+
+    [JsonPropertyName("sessionPolicy")]
+    public SessionPolicyResponse SessionPolicy { get; set; } = new();
+
     [JsonPropertyName("valueSets")]
     public Dictionary<string, IReadOnlyList<string>> ValueSets { get; set; } = new();
 
@@ -44,6 +50,39 @@ public sealed class AuthoringGuideResponse
 
     [JsonPropertyName("troubleshooting")]
     public List<string> Troubleshooting { get; set; } = [];
+}
+
+public sealed class StylePolicyResponse
+{
+    [JsonPropertyName("summary")]
+    public string Summary { get; set; } = string.Empty;
+
+    [JsonPropertyName("omitStylePropertiesWhenPromptHasNoStyleInstructions")]
+    public bool OmitStylePropertiesWhenPromptHasNoStyleInstructions { get; set; } = true;
+
+    [JsonPropertyName("propertiesToOmitUnlessExplicitlyRequested")]
+    public List<string> PropertiesToOmitUnlessExplicitlyRequested { get; set; } = [];
+
+    [JsonPropertyName("automaticDefaults")]
+    public List<string> AutomaticDefaults { get; set; } = [];
+
+    [JsonPropertyName("explicitStyleTriggers")]
+    public List<string> ExplicitStyleTriggers { get; set; } = [];
+}
+
+public sealed class SessionPolicyResponse
+{
+    [JsonPropertyName("summary")]
+    public string Summary { get; set; } = string.Empty;
+
+    [JsonPropertyName("reuseSessionForFollowUpEdits")]
+    public bool ReuseSessionForFollowUpEdits { get; set; } = true;
+
+    [JsonPropertyName("followUpEditTriggers")]
+    public List<string> FollowUpEditTriggers { get; set; } = [];
+
+    [JsonPropertyName("recommendedInspectionToolsBeforeEditing")]
+    public List<string> RecommendedInspectionToolsBeforeEditing { get; set; } = [];
 }
 
 public sealed class AuthoringToolMap

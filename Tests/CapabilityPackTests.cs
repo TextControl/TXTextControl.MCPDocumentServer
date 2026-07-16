@@ -326,8 +326,15 @@ public sealed class CapabilityPackTests
         Assert.Contains(guide.OperationSchemas, schema => schema.Type == TableCapabilityPack.AppendTable);
         Assert.Contains(guide.StylePresets, style => style.Name == "Body" && style.FontName == "Arial");
         Assert.Contains(guide.TableStylePresets, preset => preset.Name == "Professional Blue");
+        Assert.True(guide.StylePolicy.OmitStylePropertiesWhenPromptHasNoStyleInstructions);
+        Assert.Contains("styleName", guide.StylePolicy.PropertiesToOmitUnlessExplicitlyRequested);
+        Assert.Contains(guide.StylePolicy.AutomaticDefaults, value => value.Contains("document.title", StringComparison.OrdinalIgnoreCase));
+        Assert.True(guide.SessionPolicy.ReuseSessionForFollowUpEdits);
+        Assert.Contains("change", guide.SessionPolicy.FollowUpEditTriggers);
+        Assert.Contains("get_document_tables", guide.SessionPolicy.RecommendedInspectionToolsBeforeEditing);
         Assert.Contains(guide.Recipes, recipe => recipe.Name == "invoice-template-mail-merge");
         Assert.Contains(guide.BestPractices, practice => practice.Contains("Set page size", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(guide.BestPractices, practice => practice.Contains("Style omission policy", StringComparison.OrdinalIgnoreCase));
     }
 
     private static DocumentOperationRegistry CreateRegistry(DocumentAutomationOptions options)

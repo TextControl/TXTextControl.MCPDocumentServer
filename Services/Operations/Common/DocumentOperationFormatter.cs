@@ -27,6 +27,24 @@ internal static class DocumentOperationFormatter
         ApplyStyle(paragraphStyle, style);
     }
 
+    public static void ReplaceParagraphStyle(ServerTextControl textControl, TextStyleDefinition style)
+    {
+        if (string.IsNullOrWhiteSpace(style.Name))
+        {
+            throw new ArgumentException("style.name is required.");
+        }
+
+        var name = style.Name.Trim();
+        if (textControl.ParagraphStyles.GetItem(name) is not null)
+        {
+            textControl.ParagraphStyles.Remove(name);
+        }
+
+        var paragraphStyle = new ParagraphStyle(name);
+        ApplyStyle(paragraphStyle, style);
+        textControl.ParagraphStyles.Add(paragraphStyle);
+    }
+
     public static void ApplyStyle(Selection selection, TextStyleDefinition style)
     {
         if (!string.IsNullOrWhiteSpace(style.FontName))

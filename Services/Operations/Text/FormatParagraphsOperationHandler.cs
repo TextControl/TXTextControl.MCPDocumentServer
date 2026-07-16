@@ -23,9 +23,9 @@ public sealed class FormatParagraphsOperationHandler : IDocumentOperationHandler
         OptionalProperties = ["paragraphIndex"],
         Properties = new()
         {
-            ["paragraph.spaceAfter"] = "Space after paragraph. Defaults to points when paragraph.unit is omitted.",
-            ["paragraph.spaceBefore"] = "Space before paragraph. Defaults to points when paragraph.unit is omitted.",
-            ["paragraph.alignment"] = "Optional paragraph alignment: left or right.",
+            ["paragraph.spaceAfter"] = "Space after paragraph. Use only when the user explicitly asks for paragraph spacing.",
+            ["paragraph.spaceBefore"] = "Space before paragraph. Use only when the user explicitly asks for paragraph spacing.",
+            ["paragraph.alignment"] = "Optional paragraph alignment: left or right. Use only when the user explicitly asks for alignment.",
             ["paragraphIndex"] = "Optional zero-based paragraph index. If omitted, all body paragraphs are formatted."
         },
         Example = new()

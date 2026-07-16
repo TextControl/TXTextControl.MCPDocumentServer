@@ -33,7 +33,7 @@ public sealed class OperationTools
         _authoringGuide = authoringGuide;
     }
 
-    [McpServerTool, Description("Applies an ordered list of semantic document operations to a session. If request.sessionId is omitted and request.createIfMissing is true, a new document session is created. Call get_authoring_guide first for operation-specific schemas, examples, valid enum values, style presets, table presets, and recipes. Use this for incremental edits, table formatting, fields, merge blocks, form fields, sections, headers/footers, images, search/replace, and layout changes.")]
+    [McpServerTool, Description("Applies an ordered list of semantic document operations to a session. Session continuity rule: for follow-up prompts that ask to change, modify, update, edit, adjust, make, increase, decrease, replace, or refer to the current/same/that document, reuse the existing sessionId and inspect the current document first; do not create a new document unless the user explicitly asks for one. If request.sessionId is omitted and request.createIfMissing is true, a new document session is created. Call get_authoring_guide first for operation-specific schemas, examples, valid enum values, style presets, table presets, recipes, and stylePolicy. Style policy: if the user prompt does not explicitly request styling, omit styleName, style, paragraph, cellStyle, and tableStyleName; server defaults apply. Use this for incremental edits, table formatting, fields, merge blocks, form fields, sections, headers/footers, images, search/replace, and layout changes.")]
     public object ApplyOperations(ApplyOperationsRequest request)
     {
         try
@@ -46,7 +46,7 @@ public sealed class OperationTools
         }
     }
 
-    [McpServerTool, Description("Renders a neutral AI-facing Document model into a real TX Text Control session document. Prefer this for new documents when the AI can describe the intended structure as Document, Section, Paragraph, Run, Table, Image, HeaderFooter, and Field objects. Call get_authoring_guide first for the document model contract and full examples.")]
+    [McpServerTool, Description("Renders a neutral AI-facing Document model into a real TX Text Control session document. Use this for new drafts, not for follow-up edits to an existing document unless a sessionId is supplied intentionally. Session continuity rule: when the user asks to change, modify, update, edit, adjust, make, increase, decrease, replace, or refers to the current/same/that document, reuse the existing sessionId and prefer apply_operations after inspection; do not create a new document unless explicitly requested. Style policy: if the user prompt does not explicitly request styling, omit styleName, style, paragraphStyle, cellStyle, tableStyleName, fonts, colors, sizes, borders, spacing, and alignment. Configured defaults are applied automatically: document.title uses the title style role, unstyled paragraphs and headers/footers use the body style role, and unstyled tables receive the first configured table style preset. Simple whole-cell table cellStyle and uniform cell run styles are rendered; richer table-cell content may return warnings. Always inspect warnings. Use apply_operations for precise table header/cell formatting, fields in cells, form fields, merge blocks, or targeted edits. Call get_authoring_guide first for the document model contract and full examples.")]
     public object RenderDocumentModel(RenderDocumentModelRequest request)
     {
         try
@@ -79,6 +79,8 @@ public sealed class OperationTools
                 tableStylePresetNames = _options.TableStylePresets.ConvertAll(style => style.Name),
                 stylePresets = _options.StylePresets,
                 tableStylePresets = _options.TableStylePresets,
+                stylePolicy = guide.StylePolicy,
+                sessionPolicy = guide.SessionPolicy,
                 valueSets = guide.ValueSets,
                 recipes = guide.Recipes,
                 recommendedWorkflow = guide.RecommendedWorkflow,

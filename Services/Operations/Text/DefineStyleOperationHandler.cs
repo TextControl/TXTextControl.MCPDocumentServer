@@ -16,19 +16,19 @@ public sealed class DefineStyleOperationHandler : IDocumentOperationHandler
         Type = BasicTextCapabilityPack.DefineStyle,
         CapabilityPack = BasicTextCapabilityPack.PackName,
         Description = "Defines or replaces a reusable paragraph formatting style.",
-        Intent = "Use before adding styled paragraphs or when changing an existing style definition.",
+        Intent = "Use only when the user explicitly asks to create, define, or change a style. Do not define styles for prompts without style instructions; configured defaults apply automatically.",
         RequiredProperties = ["type", "style"],
         OptionalProperties = [],
         Properties = new()
         {
             ["style.name"] = "Unique style name.",
-            ["style.fontName"] = "Optional font family, for example Arial.",
-            ["style.fontSize"] = "Optional font size.",
+            ["style.fontName"] = "Optional font family, for example Arial. Send only when explicitly requested.",
+            ["style.fontSize"] = "Optional font size. Send only when explicitly requested.",
             ["style.fontSizeUnit"] = "Optional size unit: pt or px. Defaults to pt.",
-            ["style.bold"] = "Optional bold flag.",
-            ["style.italic"] = "Optional italic flag.",
-            ["style.underline"] = "Optional underline flag.",
-            ["style.colorHex"] = "Optional text color such as #1f2937."
+            ["style.bold"] = "Optional bold flag. Send only when explicitly requested.",
+            ["style.italic"] = "Optional italic flag. Send only when explicitly requested.",
+            ["style.underline"] = "Optional underline flag. Send only when explicitly requested.",
+            ["style.colorHex"] = "Optional text color such as #1f2937. Send only when explicitly requested."
         },
         Example = new()
         {
@@ -64,7 +64,7 @@ public sealed class DefineStyleOperationHandler : IDocumentOperationHandler
 
         if (context.TryGetTextControl(out var tx))
         {
-            DocumentOperationFormatter.EnsureParagraphStyle(tx, operation.Style);
+            DocumentOperationFormatter.ReplaceParagraphStyle(tx, operation.Style);
         }
 
         var existing = context.Document.Styles.FirstOrDefault(style =>

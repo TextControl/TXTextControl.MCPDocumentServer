@@ -103,7 +103,23 @@ Transport is configured as stateless HTTP.
 
 External AI clients should call `get_authoring_guide` first. It returns recommended workflows, operation-specific schemas and examples, style/table preset definitions, valid value sets, document model guidance, recipes, best practices, and troubleshooting notes.
 
-Use `render_document_model` for new model-first documents. Use `apply_operations` for incremental edits, tables, images, fields, merge blocks, form fields, sections, headers/footers, and targeted formatting.
+Use `render_document_model` for new model-first draft documents. The model-first path applies configured defaults automatically: `document.title` is rendered with the configured title role, unstyled paragraphs and headers/footers use the configured body role, and unstyled tables receive the first configured table style preset. It supports simple table cell styles and uniform whole-cell run styles, but clients must inspect `warnings` for rich content that was flattened or not rendered with full fidelity. Use `apply_operations` for precise incremental edits, table header/cell formatting, images, fields, merge blocks, form fields, sections, headers/footers, and targeted formatting.
+
+Operation-first document creation also applies semantic defaults: the first unstyled body paragraph receives the configured title role, later unstyled paragraphs receive the configured body role, and `append_table` applies the first configured table style preset unless a table `styleName` is explicitly supplied.
+
+Session continuity rule for external AI clients:
+
+- If the user asks to change, modify, update, edit, adjust, make, increase, decrease, replace, or refers to the current/same/that/previous document, reuse the existing `sessionId`.
+- Inspect the existing document first with tools such as `get_document_structure`, `get_document_tables`, or `get_document_model`.
+- Do not create a new document/session unless the user explicitly asks for a new document.
+
+Style omission policy for external AI clients:
+
+- If the user prompt does not explicitly mention styling, fonts, colors, sizes, spacing, borders, alignment, or named styles/presets, omit all style-related properties.
+- Do not invent `styleName`, `style`, `paragraphStyle`, `paragraph`, `cellStyle`, `tableStyleName`, font, color, size, border, spacing, or alignment values.
+- Let the server apply configured defaults automatically.
+- Send style information only when the user explicitly asks for it or names a configured style/preset.
+- Always inspect `render_document_model` warnings. If warnings mention table cell content, spans, mixed inline styles, fields, form fields, or images in cells, use `apply_operations` for exact output.
 
 ## Capability Packs
 
@@ -270,6 +286,8 @@ Use the returned `sessionId` in subsequent tool calls.
 - `styleRoles`
 - `stylePresets`
 - `tableStylePresets`
+- `stylePolicy`
+- `sessionPolicy`
 - `valueSets`
 - `recipes`
 - `bestPractices`
@@ -504,7 +522,7 @@ Use `get_document_model(sessionId)` to inspect the neutral document tree capture
 - `DefaultParagraphStyleName` defines the fallback paragraph style.
 - `StyleRoles` maps semantic roles such as title, heading1, heading2, and body to configured style names.
 - `StylePresets` defines reusable paragraph/text style names that AI clients can use without redefining them in every request.
-- `TableStylePresets` defines default table header/body/alternating-row styles, cell backgrounds, and borders.
+- `TableStylePresets` defines default table header/body/alternating-row styles, cell backgrounds, and borders. For `render_document_model`, the first configured table preset is applied when a table has no explicit `styleName`.
 
 The `/admin` page exposes editable capability packs, operations, style presets, and table presets. The `/admin/automation` JSON endpoint exposes the currently configured automation surface.
 

@@ -27,8 +27,8 @@ public sealed class SetHeaderFooterOperationHandler : IDocumentOperationHandler
             ["headerFooterType"] = "One of: header, footer, firstPageHeader, firstPageFooter, evenHeader, evenFooter.",
             ["text"] = "Header/footer text when runs are not supplied.",
             ["runs"] = "Optional ordered array of text runs; rendered before the optional page number.",
-            ["style"] = "Optional inline TextStyleDefinition applied to the header/footer text.",
-            ["styleName"] = "Optional named style applied to the header/footer text.",
+            ["style"] = "Optional inline TextStyleDefinition applied to the header/footer text. Omit unless the user explicitly asks for header/footer styling.",
+            ["styleName"] = "Optional named style applied to the header/footer text. Omit when the prompt contains no explicit style instruction; the configured body default is applied automatically.",
             ["typeName"] = "Optional field type. Use DATE for a TX DocumentServer DateField. Defaults to MERGEFIELD when fieldName is supplied.",
             ["fieldName"] = "Optional MERGEFIELD name appended after the text/runs.",
             ["fieldText"] = "Optional visible placeholder text for the MERGEFIELD. Defaults to fieldName.",
@@ -240,6 +240,18 @@ public sealed class SetHeaderFooterOperationHandler : IDocumentOperationHandler
             return;
         }
 
+        var hasRunStyle = runs.Any(run =>
+            run.Style is not null || !string.IsNullOrWhiteSpace(run.StyleName));
+        if (!hasRunStyle)
+        {
+            headerFooter.Selection.Start = 0;
+            headerFooter.Selection.Length = text.Length;
+            DocumentOperationFormatter.ApplyStyle(headerFooter.Selection, context.GetDefaultTextStyle());
+            headerFooter.Selection.Start = text.Length;
+            headerFooter.Selection.Length = 0;
+            return;
+        }
+
         var offset = 0;
         foreach (var run in runs)
         {
@@ -272,10 +284,13 @@ public sealed class SetHeaderFooterOperationHandler : IDocumentOperationHandler
         string dateFormat)
     {
         var section = context.GetMainSection();
+        var styleName = string.IsNullOrWhiteSpace(operation.StyleName)
+            ? context.GetDefaultParagraphStyleName()
+            : operation.StyleName.Trim();
         var paragraph = new DocumentModel.Paragraph
         {
             Id = Guid.NewGuid().ToString("N"),
-            StyleName = string.IsNullOrWhiteSpace(operation.StyleName) ? null : operation.StyleName.Trim(),
+            StyleName = styleName,
             Runs = runs
         };
 
@@ -288,7 +303,7 @@ public sealed class SetHeaderFooterOperationHandler : IDocumentOperationHandler
                     Id = Guid.NewGuid().ToString("N"),
                     Text = textWithPlaceholders,
                     Style = operation.Style,
-                    StyleName = string.IsNullOrWhiteSpace(operation.StyleName) ? null : operation.StyleName.Trim()
+                    StyleName = styleName
                 }
             ];
         }

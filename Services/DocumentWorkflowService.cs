@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Microsoft.Extensions.Options;
 using TxTextControl.McpServer.Models;
 using TxTextControl.McpServer.Models.DocumentModel;
 using TxTextControl.McpServer.Models.Requests;
 using TxTextControl.McpServer.Models.Responses;
+using TxTextControl.McpServer.Options;
 
 namespace TxTextControl.McpServer.Services;
 
@@ -15,13 +17,16 @@ public sealed class DocumentWorkflowService
 {
     private readonly DocumentSessionService _sessions;
     private readonly ITxDocumentEngine _engine;
+    private readonly DocumentAutomationOptions _automationOptions;
 
     public DocumentWorkflowService(
         DocumentSessionService sessions,
-        ITxDocumentEngine engine)
+        ITxDocumentEngine engine,
+        IOptions<DocumentAutomationOptions> automationOptions)
     {
         _sessions = sessions;
         _engine = engine;
+        _automationOptions = automationOptions.Value;
     }
 
     /// <summary>
@@ -152,14 +157,24 @@ public sealed class DocumentWorkflowService
     /// </summary>
     public ApplyOperationsResponse RenderDocumentModel(RenderDocumentModelRequest request)
     {
-        var operations = DocumentModelOperationCompiler.Compile(request);
-        var response = ApplyOperations(operations);
+        var compiled = DocumentModelOperationCompiler.CompileDetailed(request, _automationOptions);
+        var response = ApplyOperations(compiled.Request);
         var session = _sessions.Get(response.SessionId);
         var state = _sessions.LoadState(session);
 
-        state.Document = request.Document!;
-        state.Styles = ExtractStyles(request.Document!);
+        if (!string.IsNullOrWhiteSpace(request.Document?.Id))
+        {
+            state.Document.Id = request.Document.Id;
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.Document?.Title))
+        {
+            state.Document.Title = request.Document.Title;
+        }
+
+        state.Styles = ExtractStyles(state.Document);
         _sessions.SaveState(session, state);
+        response.Warnings.AddRange(compiled.Warnings);
 
         return response;
     }

@@ -30,7 +30,9 @@ public sealed class AuthoringGuideService
             RecommendedWorkflow =
             [
                 "Call get_authoring_guide before planning a document.",
-                "For new documents, prefer render_document_model when the requested document can be expressed as sections, paragraphs, runs, tables, images, headers, footers, and fields.",
+                "For new documents, prefer render_document_model when the requested document can be expressed as sections, paragraphs, runs, tables, images, headers, footers, and fields. It applies configured title, body, header/footer, and table defaults when styleName is omitted.",
+                "For follow-up prompts that say change, modify, update, edit, adjust, make, increase, decrease, replace, add to it, or refer to the current/same/that document, reuse the existing sessionId. Do not create a new document unless the user explicitly asks for a new document.",
+                "After render_document_model, inspect warnings. Use apply_operations when warnings indicate that rich model content was flattened or not rendered with full fidelity.",
                 "Use apply_operations for incremental edits, template-specific actions, table formatting, merge blocks, form fields, search/replace, and layout changes.",
                 "Set page size and margins before inserting wide tables because TX Text Control tables do not automatically reflow after page size changes.",
                 "Use inspection tools after complex edits to retrieve generated table ids, field names, merge blocks, headers, footers, and paragraph indices.",
@@ -43,13 +45,21 @@ public sealed class AuthoringGuideService
             DefaultParagraphStyleName = _options.DefaultParagraphStyleName,
             StylePresets = _options.StylePresets,
             TableStylePresets = _options.TableStylePresets,
+            StylePolicy = BuildStylePolicy(),
+            SessionPolicy = BuildSessionPolicy(),
             ValueSets = BuildValueSets(),
             Recipes = BuildRecipes(),
             BestPractices =
             [
                 "Set page size and margins before creating wide tables because tables do not automatically adapt after layout changes.",
-                "Use configured style role names for common content: styleRoles.title, styleRoles.heading1, styleRoles.heading2, and styleRoles.body.",
-                "Use explicit styleName only when the user asks for a specific style; otherwise rely on defaultParagraphStyleName for body text.",
+                "Style omission policy: if the user prompt does not explicitly mention styling, fonts, colors, sizes, borders, spacing, or named styles/presets, omit all style-related properties and let the server defaults apply.",
+                "For render_document_model, document.title is rendered with styleRoles.title, unstyled paragraphs and headers/footers use styleRoles.body, and unstyled tables use the first configured tableStylePresets entry.",
+                "For apply_operations document creation, the first unstyled body paragraph uses styleRoles.title, later unstyled paragraphs use styleRoles.body, and append_table applies the first configured tableStylePresets entry unless a table styleName is explicitly supplied.",
+                "For render_document_model, simple table cellStyle and uniform whole-cell run styles are rendered. Use apply_operations for precise table header/cell formatting, fields or form fields in cells, merge blocks, images in cells, spans, or mixed inline styles.",
+                "Always inspect render_document_model warnings. A warning means the client should use follow-up operations for exact output.",
+                "Session continuity rule: for follow-up edit requests, keep the current sessionId and call inspection tools before applying operations. Creating a new session loses the document the user asked to change.",
+                "Use configured style role names for common content when you need an explicit override: styleRoles.title, styleRoles.heading1, styleRoles.heading2, and styleRoles.body.",
+                "Use explicit styleName only when the user asks for a specific style; otherwise rely on configured defaults for body text and tables.",
                 "When user instructions conflict with configured defaults, user instructions win. Apply explicit format operations after default presets.",
                 "For tables, create the table first, inspect or use the returned tableId, then apply table presets, column widths, header formatting, cell backgrounds, and borders.",
                 "For templates, insert merge fields and form fields with stable fieldName values, inspect them, then merge JSON using merge_template.",
@@ -62,10 +72,86 @@ public sealed class AuthoringGuideService
                 "If table formatting targets the wrong table, call get_document_tables and use the returned tableId.",
                 "If merge data does not fill, call get_template_merge_fields and get_template_merge_blocks to retrieve actual TX field and block names.",
                 "If an exported layout looks too wide, set_section_layout first and then recreate or resize table columns.",
-                "If a style is not applied, inspect get_document_styles and make sure the paragraph or run uses the intended styleName."
+                "If a style is not applied, inspect get_document_styles and get_document_structure. For model-first documents, omitted paragraph styles should resolve to the configured body role."
             ]
         };
     }
+
+    private static StylePolicyResponse BuildStylePolicy()
+        => new()
+        {
+            Summary = "If the user prompt does not explicitly request styling, omit style-related properties. Do not invent style names, inline styles, paragraph formatting, cell formatting, table style names, colors, fonts, sizes, spacing, borders, or alignment. The server applies configured defaults automatically. Send style information only when the user explicitly requests it or names a configured style/preset.",
+            PropertiesToOmitUnlessExplicitlyRequested =
+            [
+                "styleName",
+                "style",
+                "runs[].styleName",
+                "runs[].style",
+                "paragraph",
+                "paragraphStyle",
+                "cellStyle",
+                "tableStyleName",
+                "fontName",
+                "fontSize",
+                "fontSizeUnit",
+                "bold",
+                "italic",
+                "underline",
+                "colorHex",
+                "backgroundColorHex",
+                "border",
+                "alignment",
+                "spaceBefore",
+                "spaceAfter",
+                "lineSpacing"
+            ],
+            AutomaticDefaults =
+            [
+                "document.title is rendered with styleRoles.title.",
+                "Unstyled paragraphs and headers/footers use styleRoles.body or DefaultParagraphStyleName.",
+                "The first unstyled body paragraph in apply_operations document creation uses styleRoles.title.",
+                "Unstyled tables in render_document_model and append_table use the first configured tableStylePresets entry.",
+                "Explicit user style instructions override configured defaults."
+            ],
+            ExplicitStyleTriggers =
+            [
+                "The user mentions a font, font size, color, background, border, spacing, alignment, bold, italic, underline, or a named style/preset.",
+                "The user asks to change, format, style, highlight, color, resize, align, or restyle content.",
+                "The user explicitly identifies a style such as Title, Heading, Body, or a table preset by name."
+            ]
+        };
+
+    private static SessionPolicyResponse BuildSessionPolicy()
+        => new()
+        {
+            Summary = "Follow-up edit prompts must reuse the existing sessionId and inspect the current document before applying changes. Do not create a new document/session when the user asks to change the current, same, previous, or that document unless the user explicitly asks for a new document.",
+            FollowUpEditTriggers =
+            [
+                "change",
+                "modify",
+                "update",
+                "edit",
+                "adjust",
+                "make",
+                "increase",
+                "decrease",
+                "replace",
+                "add to it",
+                "remove from it",
+                "current document",
+                "same document",
+                "that document",
+                "previous document"
+            ],
+            RecommendedInspectionToolsBeforeEditing =
+            [
+                "get_document_structure",
+                "get_document_tables",
+                "get_document_model",
+                "get_document_styles",
+                "get_document_headers_footers"
+            ]
+        };
 
     private static AuthoringToolMap BuildToolMap()
         => new()
@@ -148,7 +234,9 @@ public sealed class AuthoringGuideService
             Notes =
             [
                 "Every block requires a type matching the populated payload property.",
-                "Paragraphs contain ordered runs; runs may use styleName or inline style.",
+                "Paragraphs contain ordered runs; runs may use styleName or inline style only when the user explicitly requested styling.",
+                "When the prompt has no style instructions, omit styleName, inline style, paragraphStyle, cellStyle, and table style fields; render_document_model applies configured defaults.",
+                "Table cells may contain paragraph blocks and simple cellStyle. Uniform whole-cell run styles are rendered. Mixed inline styles, fields, form fields, images, spans, and complex rich content in cells require apply_operations and may produce warnings.",
                 "Table cells contain blocks, so paragraphs, merge fields, and form fields can be inserted into cells.",
                 "Images can use source as a server path, base64 string, or data URI depending on the rendering path.",
                 "Field type 'merge' maps to MERGEFIELD ApplicationFields; field type 'form' maps to TX Text Control form fields where supported."

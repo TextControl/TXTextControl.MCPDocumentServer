@@ -22,8 +22,8 @@ public sealed class FormatTableHeaderRowOperationHandler : IDocumentOperationHan
         {
             ["tableId"] = "Existing table id.",
             ["rowIndex"] = "Optional zero-based header row index. Defaults to 0.",
-            ["style"] = "Optional TextStyleDefinition applied to each cell text in the row.",
-            ["cellStyle"] = "Optional CellStyleDefinition applied to each cell in the row, such as { backgroundColorHex: '#1F4E79', border: { bottom: { width: 20, colorHex: '#000000' } } }."
+            ["style"] = "Optional TextStyleDefinition applied to each cell text in the row. Use only when the user explicitly asks for header row text styling.",
+            ["cellStyle"] = "Optional CellStyleDefinition applied to each cell in the row, such as { backgroundColorHex: '#1F4E79', border: { bottom: { width: 20, colorHex: '#000000' } } }. Use only when the user explicitly asks for header row/cell formatting."
         },
         Example = new()
         {

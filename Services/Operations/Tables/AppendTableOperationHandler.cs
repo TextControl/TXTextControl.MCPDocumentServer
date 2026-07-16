@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Microsoft.Extensions.Options;
 using DocumentModel = TxTextControl.McpServer.Models.DocumentModel;
 using TxTextControl.McpServer.Models.Requests;
 using TxTextControl.McpServer.Models.Responses;
+using TxTextControl.McpServer.Options;
 using TXTextControl;
 
 namespace TxTextControl.McpServer.Services.Operations;
@@ -11,6 +13,22 @@ namespace TxTextControl.McpServer.Services.Operations;
 public sealed class AppendTableOperationHandler : IDocumentOperationHandler
 {
     private const int MinimumTxTableId = 10;
+    private readonly DocumentAutomationOptions _options;
+
+    public AppendTableOperationHandler()
+        : this(new DocumentAutomationOptions())
+    {
+    }
+
+    public AppendTableOperationHandler(IOptions<DocumentAutomationOptions> options)
+        : this(options.Value)
+    {
+    }
+
+    public AppendTableOperationHandler(DocumentAutomationOptions options)
+    {
+        _options = options;
+    }
 
     public string Type => TableCapabilityPack.AppendTable;
     public string CapabilityPack => TableCapabilityPack.PackName;
@@ -26,7 +44,7 @@ public sealed class AppendTableOperationHandler : IDocumentOperationHandler
         {
             ["rows"] = "Array of rows, where each row is an array of cell text. Missing cells in shorter rows are padded as empty text.",
             ["tableId"] = "Optional TX table id as an integer string between 10 and 32767.",
-            ["styleName"] = "Reserved optional table style name for future formatting support.",
+            ["styleName"] = "Optional table preset/style name. Omit when the prompt contains no explicit table style instruction; the configured default table preset is applied automatically.",
             ["paragraphIndex"] = "Optional zero-based body paragraph index used with placement 'before' or 'after'.",
             ["placement"] = "Optional placement: end, before, or after. Defaults to end."
         },
@@ -53,6 +71,7 @@ public sealed class AppendTableOperationHandler : IDocumentOperationHandler
         var columnCount = rows.Max(row => row.Count);
         var txTableId = ResolveTableId(context.Document, operation.TableId);
         var target = ResolveInsertionTarget(context.Document, operation);
+        var tablePreset = ResolveTablePreset(operation.StyleName);
 
         if (context.TryGetTextControl(out var tx))
         {
@@ -86,10 +105,21 @@ public sealed class AppendTableOperationHandler : IDocumentOperationHandler
                 ApplyColumnWidths(table, columnWidths);
             }
 
+            if (tablePreset is not null)
+            {
+                ApplyPresetToTxTable(tx, table, rowCount, columnCount, tablePreset);
+            }
+
             context.HasOpenParagraph = false;
         }
 
         var neutralTable = ToNeutralTable(txTableId, operation, rows, columnCount);
+        if (tablePreset is not null)
+        {
+            neutralTable.StyleName = tablePreset.Name;
+            ApplyPresetToModelTable(neutralTable, tablePreset);
+        }
+
         var modelColumnWidths = ResolveAutoFitColumnWidths(context, rows, columnCount);
         if (modelColumnWidths is not null)
         {
@@ -130,10 +160,103 @@ public sealed class AppendTableOperationHandler : IDocumentOperationHandler
                 ["tableId"] = neutralTable.Id,
                 ["rowCount"] = rowCount,
                 ["columnCount"] = columnCount,
+                ["styleName"] = tablePreset?.Name,
                 ["placement"] = target.Placement.ToString().ToLowerInvariant(),
                 ["paragraphIndex"] = target.ParagraphIndex
             }
         };
+    }
+
+    private DocumentModel.TableStylePresetDefinition? ResolveTablePreset(string? requestedName)
+    {
+        if (!string.IsNullOrWhiteSpace(requestedName))
+        {
+            var normalized = requestedName.Trim();
+            return _options.TableStylePresets.FirstOrDefault(preset =>
+                       string.Equals(preset.Name, normalized, StringComparison.OrdinalIgnoreCase))
+                   ?? throw new InvalidOperationException($"Table style preset '{normalized}' was not found.");
+        }
+
+        return _options.TableStylePresets.FirstOrDefault(preset => !string.IsNullOrWhiteSpace(preset.Name));
+    }
+
+    private static void ApplyPresetToTxTable(
+        ServerTextControl tx,
+        Table table,
+        int rowCount,
+        int columnCount,
+        DocumentModel.TableStylePresetDefinition preset)
+    {
+        if (preset.HeaderRowIndex < 0 || preset.HeaderRowIndex >= rowCount)
+        {
+            return;
+        }
+
+        for (var rowIndex = 0; rowIndex < rowCount; rowIndex++)
+        {
+            var (textStyle, cellStyle) = ResolveCellStyles(preset, rowIndex);
+            for (var columnIndex = 0; columnIndex < columnCount; columnIndex++)
+            {
+                var cell = TableOperationUtilities.GetTxCell(table, rowIndex, columnIndex);
+                if (textStyle is not null)
+                {
+                    cell.Select();
+                    var selection = tx.Selection;
+                    DocumentOperationFormatter.ApplyStyle(selection, textStyle);
+                    tx.Selection = selection;
+                }
+
+                if (cellStyle is not null)
+                {
+                    DocumentOperationFormatter.ApplyCellStyle(cell, cellStyle);
+                }
+            }
+        }
+    }
+
+    private static void ApplyPresetToModelTable(
+        DocumentModel.Table table,
+        DocumentModel.TableStylePresetDefinition preset)
+    {
+        if (preset.HeaderRowIndex < 0 || preset.HeaderRowIndex >= table.Rows.Count)
+        {
+            return;
+        }
+
+        for (var rowIndex = 0; rowIndex < table.Rows.Count; rowIndex++)
+        {
+            var (textStyle, cellStyle) = ResolveCellStyles(preset, rowIndex);
+            foreach (var cell in table.Rows[rowIndex].Cells)
+            {
+                if (textStyle is not null)
+                {
+                    TableOperationUtilities.ApplyStyleToModelCell(cell, textStyle);
+                }
+
+                if (cellStyle is not null)
+                {
+                    TableOperationUtilities.ApplyCellStyleToModelCell(cell, cellStyle);
+                }
+            }
+        }
+    }
+
+    private static (DocumentModel.TextStyleDefinition? TextStyle, DocumentModel.CellStyleDefinition? CellStyle) ResolveCellStyles(
+        DocumentModel.TableStylePresetDefinition preset,
+        int rowIndex)
+    {
+        if (rowIndex == preset.HeaderRowIndex)
+        {
+            return (preset.HeaderStyle, preset.HeaderCellStyle);
+        }
+
+        var bodyOrdinal = rowIndex > preset.HeaderRowIndex
+            ? rowIndex - preset.HeaderRowIndex - 1
+            : rowIndex;
+        var useAlternating = bodyOrdinal % 2 == 1;
+        return useAlternating
+            ? (preset.AlternatingRowStyle ?? preset.BodyStyle, preset.AlternatingRowCellStyle ?? preset.BodyCellStyle)
+            : (preset.BodyStyle, preset.BodyCellStyle);
     }
 
     private static TableInsertionTarget ResolveInsertionTarget(

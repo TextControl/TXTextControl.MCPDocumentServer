@@ -23,8 +23,8 @@ public sealed class FormatTableCellOperationHandler : IDocumentOperationHandler
             ["tableId"] = "Existing table id.",
             ["rowIndex"] = "Zero-based row index.",
             ["columnIndex"] = "Zero-based column index.",
-            ["style"] = "Optional TextStyleDefinition to apply to the complete cell text.",
-            ["cellStyle"] = "Optional CellStyleDefinition for cell-level formatting, such as { backgroundColorHex: '#1F4E79', border: { width: 10, colorHex: '#000000' } }."
+            ["style"] = "Optional TextStyleDefinition to apply to the complete cell text. Use only when the user explicitly asks for cell text styling.",
+            ["cellStyle"] = "Optional CellStyleDefinition for cell-level formatting, such as { backgroundColorHex: '#1F4E79', border: { width: 10, colorHex: '#000000' } }. Use only when the user explicitly asks for cell formatting."
         },
         Example = new()
         {

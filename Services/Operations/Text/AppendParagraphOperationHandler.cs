@@ -24,10 +24,10 @@ public sealed class AppendParagraphOperationHandler : IDocumentOperationHandler
         Properties = new()
         {
             ["text"] = "Paragraph text to append.",
-            ["runs"] = "Optional ordered array of { text, styleName, style } inline runs. When provided, runs are rendered instead of text.",
-            ["runs[].style"] = "Optional inline TextStyleDefinition for a run, such as { bold: true }.",
-            ["runs[].styleName"] = "Optional named style applied directly to the run.",
-            ["styleName"] = "Optional predefined style name to apply to the whole paragraph."
+            ["runs"] = "Optional ordered array of { text, styleName, style } inline runs. When provided, runs are rendered instead of text. Omit run style fields unless the user explicitly asks for inline styling.",
+            ["runs[].style"] = "Optional inline TextStyleDefinition for a run, such as { bold: true }. Omit unless the user explicitly asks for inline styling.",
+            ["runs[].styleName"] = "Optional named style applied directly to the run. Omit unless the user explicitly asks for this named style.",
+            ["styleName"] = "Optional predefined style name to apply to the whole paragraph. Omit when the prompt contains no explicit style instruction; during document creation the first unstyled title-like body paragraph uses the configured title role and later unstyled paragraphs use the configured body default."
         },
         Example = new()
         {
@@ -47,68 +47,73 @@ public sealed class AppendParagraphOperationHandler : IDocumentOperationHandler
     {
         var runs = NormalizeRuns(operation);
         var text = string.Concat(runs.Select(run => run.Text));
-        var tx = context.TextControl;
-        var start = (tx.Text ?? string.Empty).Length;
-        var prefix = context.HasOpenParagraph ? "\r\n" : string.Empty;
-        var insertion = prefix + text;
-        var textStart = start + prefix.Length;
-
-        tx.Selection = new Selection(start, 0) { Text = insertion };
-        context.InlineDocumentEndInsertionIndex = textStart + text.Length;
-        context.HasOpenParagraph = true;
-
         var effectiveStyleName = string.IsNullOrWhiteSpace(operation.StyleName)
-            ? context.GetDefaultParagraphStyleName()
+            ? context.IsAtStartOfMainBody() && LooksLikeDocumentTitle(text)
+                ? context.GetTitleStyleName() ?? context.GetDefaultParagraphStyleName()
+                : context.GetDefaultParagraphStyleName()
             : operation.StyleName.Trim();
 
-        if (text.Length > 0)
+        if (context.TryGetTextControl(out var tx))
         {
-            tx.Selection = new Selection(textStart, text.Length);
-            var defaultSelection = tx.Selection;
-            var defaultStyle = context.GetDefaultTextStyle();
-            DocumentOperationFormatter.ApplyStyle(defaultSelection, defaultStyle);
-            tx.Selection = defaultSelection;
-            if (defaultStyle.Paragraph is not null)
-            {
-                DocumentOperationFormatter.ApplyParagraphStyle(tx.Paragraphs[tx.Paragraphs.Count], defaultStyle.Paragraph);
-            }
-        }
+            var start = (tx.Text ?? string.Empty).Length;
+            var prefix = context.HasOpenParagraph ? "\r\n" : string.Empty;
+            var insertion = prefix + text;
+            var textStart = start + prefix.Length;
 
-        if (!string.IsNullOrWhiteSpace(effectiveStyleName))
-        {
-            var style = context.GetStyle(effectiveStyleName);
-            style.Name = effectiveStyleName;
-            DocumentOperationFormatter.EnsureParagraphStyle(tx, style);
-            tx.Paragraphs[tx.Paragraphs.Count].FormattingStyle = style.Name;
-            tx.Selection = new Selection(textStart, text.Length);
-            var selection = tx.Selection;
-            selection.FormattingStyle = style.Name;
-            tx.Selection = selection;
-            if (style.Paragraph is not null)
-            {
-                DocumentOperationFormatter.ApplyParagraphStyle(tx.Paragraphs[tx.Paragraphs.Count], style.Paragraph);
-            }
-        }
+            tx.Selection = new Selection(start, 0) { Text = insertion };
+            context.InlineDocumentEndInsertionIndex = textStart + text.Length;
 
-        var runOffset = textStart;
-        foreach (var run in runs)
-        {
-            if (run.Text.Length == 0)
+            if (text.Length > 0)
             {
-                continue;
+                tx.Selection = new Selection(textStart, text.Length);
+                var defaultSelection = tx.Selection;
+                var defaultStyle = context.GetDefaultTextStyle();
+                DocumentOperationFormatter.ApplyStyle(defaultSelection, defaultStyle);
+                tx.Selection = defaultSelection;
+                if (defaultStyle.Paragraph is not null)
+                {
+                    DocumentOperationFormatter.ApplyParagraphStyle(tx.Paragraphs[tx.Paragraphs.Count], defaultStyle.Paragraph);
+                }
             }
 
-            var runStyle = ResolveRunStyle(context, run);
-            if (runStyle is not null)
+            if (!string.IsNullOrWhiteSpace(effectiveStyleName))
             {
-                tx.Selection = new Selection(runOffset, run.Text.Length);
+                var style = context.GetStyle(effectiveStyleName);
+                style.Name = effectiveStyleName;
+                DocumentOperationFormatter.EnsureParagraphStyle(tx, style);
+                tx.Paragraphs[tx.Paragraphs.Count].FormattingStyle = style.Name;
+                tx.Selection = new Selection(textStart, text.Length);
                 var selection = tx.Selection;
-                DocumentOperationFormatter.ApplyStyle(selection, runStyle);
+                selection.FormattingStyle = style.Name;
                 tx.Selection = selection;
+                if (style.Paragraph is not null)
+                {
+                    DocumentOperationFormatter.ApplyParagraphStyle(tx.Paragraphs[tx.Paragraphs.Count], style.Paragraph);
+                }
             }
 
-            runOffset += run.Text.Length;
+            var runOffset = textStart;
+            foreach (var run in runs)
+            {
+                if (run.Text.Length == 0)
+                {
+                    continue;
+                }
+
+                var runStyle = ResolveRunStyle(context, run);
+                if (runStyle is not null)
+                {
+                    tx.Selection = new Selection(runOffset, run.Text.Length);
+                    var selection = tx.Selection;
+                    DocumentOperationFormatter.ApplyStyle(selection, runStyle);
+                    tx.Selection = selection;
+                }
+
+                runOffset += run.Text.Length;
+            }
         }
+
+        context.HasOpenParagraph = true;
 
         var paragraph = new DocumentModel.Paragraph
         {
@@ -197,5 +202,42 @@ public sealed class AppendParagraphOperationHandler : IDocumentOperationHandler
         }
 
         return context.GetDefaultTextStyle().Paragraph;
+    }
+
+    private static bool LooksLikeDocumentTitle(string text)
+    {
+        var trimmed = text.Trim();
+        if (trimmed.Length == 0 || trimmed.Length > 80)
+        {
+            return false;
+        }
+
+        if (trimmed.EndsWith(".", StringComparison.Ordinal)
+            || trimmed.EndsWith("!", StringComparison.Ordinal)
+            || trimmed.EndsWith("?", StringComparison.Ordinal)
+            || trimmed.EndsWith(":", StringComparison.Ordinal)
+            || trimmed.EndsWith(";", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var words = trimmed.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (words.Length > 8)
+        {
+            return false;
+        }
+
+        var letters = trimmed.Where(char.IsLetter).ToList();
+        if (letters.Count == 0)
+        {
+            return false;
+        }
+
+        if (letters.All(letter => !char.IsLower(letter)))
+        {
+            return true;
+        }
+
+        return char.IsUpper(letters[0]);
     }
 }

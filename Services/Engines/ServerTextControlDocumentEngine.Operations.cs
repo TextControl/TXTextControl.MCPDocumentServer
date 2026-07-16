@@ -43,7 +43,12 @@ public sealed partial class ServerTextControlDocumentEngine
                 tx.Load(workingDocumentPath, StreamType.InternalUnicodeFormat);
             }
 
-            var context = new DocumentOperationContext(tx, document, styles, ResolveDefaultBodyStyleName());
+            var context = new DocumentOperationContext(
+                tx,
+                document,
+                styles,
+                ResolveDefaultBodyStyleName(),
+                ResolveTitleStyleName());
 
             for (var i = 0; i < request.Operations.Count; i++)
             {
@@ -152,4 +157,9 @@ public sealed partial class ServerTextControlDocumentEngine
         => !string.IsNullOrWhiteSpace(_automationOptions.StyleRoles?.Body)
             ? _automationOptions.StyleRoles.Body
             : _automationOptions.DefaultParagraphStyleName;
+
+    private string? ResolveTitleStyleName()
+        => string.IsNullOrWhiteSpace(_automationOptions.StyleRoles?.Title)
+            ? null
+            : _automationOptions.StyleRoles.Title;
 }

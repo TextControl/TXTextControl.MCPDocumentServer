@@ -14,7 +14,8 @@ public sealed class DocumentOperationContext
         ServerTextControl textControl,
         Document document,
         IDictionary<string, TextStyleDefinition> styles,
-        string? defaultParagraphStyleName = null)
+        string? defaultParagraphStyleName = null,
+        string? titleStyleName = null)
     {
         _textControl = textControl;
         Document = document;
@@ -22,18 +23,25 @@ public sealed class DocumentOperationContext
         DefaultParagraphStyleName = string.IsNullOrWhiteSpace(defaultParagraphStyleName)
             ? "Body"
             : defaultParagraphStyleName.Trim();
+        TitleStyleName = string.IsNullOrWhiteSpace(titleStyleName)
+            ? null
+            : titleStyleName.Trim();
     }
 
     public DocumentOperationContext(
         Document document,
         IDictionary<string, TextStyleDefinition> styles,
-        string? defaultParagraphStyleName = null)
+        string? defaultParagraphStyleName = null,
+        string? titleStyleName = null)
     {
         Document = document;
         Styles = styles;
         DefaultParagraphStyleName = string.IsNullOrWhiteSpace(defaultParagraphStyleName)
             ? "Body"
             : defaultParagraphStyleName.Trim();
+        TitleStyleName = string.IsNullOrWhiteSpace(titleStyleName)
+            ? null
+            : titleStyleName.Trim();
     }
 
     public ServerTextControl TextControl
@@ -48,6 +56,7 @@ public sealed class DocumentOperationContext
     public Document Document { get; }
     public IDictionary<string, TextStyleDefinition> Styles { get; }
     public string DefaultParagraphStyleName { get; }
+    public string? TitleStyleName { get; }
     public int? InlineDocumentEndInsertionIndex { get; set; }
     public int? DocumentEndInsertionIndex { get; set; }
     public int DocumentPositionCorrection { get; set; }
@@ -124,4 +133,14 @@ public sealed class DocumentOperationContext
 
     public string? GetDefaultParagraphStyleName()
         => Styles.ContainsKey(DefaultParagraphStyleName) ? DefaultParagraphStyleName : null;
+
+    public string? GetTitleStyleName()
+        => !string.IsNullOrWhiteSpace(TitleStyleName) && Styles.ContainsKey(TitleStyleName)
+            ? TitleStyleName
+            : null;
+
+    public bool IsAtStartOfMainBody()
+        => CurrentSectionIndex == 0
+           && GetMainSection().Blocks.Count == 0
+           && !HasOpenParagraph;
 }

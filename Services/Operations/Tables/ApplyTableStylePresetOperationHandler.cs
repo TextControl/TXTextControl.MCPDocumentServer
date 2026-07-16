@@ -36,8 +36,8 @@ public sealed class ApplyTableStylePresetOperationHandler : IDocumentOperationHa
         Properties = new()
         {
             ["tableId"] = "Existing table id.",
-            ["styleName"] = "Configured table style preset name. Defaults to the first configured table preset when omitted.",
-            ["tableStyleName"] = "Alias for styleName when the caller wants to be explicit that this is a table preset."
+            ["styleName"] = "Configured table style preset name. Omit unless the user explicitly asks for a table style/preset; when omitted this operation uses the first configured table preset.",
+            ["tableStyleName"] = "Alias for styleName when the caller wants to be explicit that this is a table preset. Omit unless explicitly requested."
         },
         Example = new()
         {

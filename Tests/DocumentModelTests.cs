@@ -1,5 +1,6 @@
 using TxTextControl.McpServer.Models.DocumentModel;
 using TxTextControl.McpServer.Models.Requests;
+using TxTextControl.McpServer.Options;
 using TxTextControl.McpServer.Services;
 using TxTextControl.McpServer.Services.Operations;
 using Xunit;
@@ -107,6 +108,49 @@ public sealed class DocumentModelTests
     }
 
     [Fact]
+    public void AppendParagraphUsesTitleRoleForFirstUnstyledBodyParagraph()
+    {
+        var document = CreateDocument();
+        var context = new DocumentOperationContext(
+            document,
+            new Dictionary<string, TextStyleDefinition>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Title"] = new()
+                {
+                    Name = "Title",
+                    FontName = "Arial",
+                    FontSize = 30,
+                    FontSizeUnit = "pt",
+                    Bold = true
+                },
+                ["Body"] = new()
+                {
+                    Name = "Body",
+                    FontName = "Arial",
+                    FontSize = 12,
+                    FontSizeUnit = "pt"
+                }
+            },
+            defaultParagraphStyleName: "Body",
+            titleStyleName: "Title");
+        var handler = new AppendParagraphOperationHandler();
+
+        handler.Apply(context, new DocumentOperation
+        {
+            Type = BasicTextCapabilityPack.AppendParagraph,
+            Text = "INVOICE"
+        }, 0);
+        handler.Apply(context, new DocumentOperation
+        {
+            Type = BasicTextCapabilityPack.AppendParagraph,
+            Text = "Thank you for your business."
+        }, 1);
+
+        Assert.Equal("Title", document.Sections[0].Blocks[0].Paragraph?.StyleName);
+        Assert.Equal("Body", document.Sections[0].Blocks[1].Paragraph?.StyleName);
+    }
+
+    [Fact]
     public void AppendTableUpdatesNeutralDocumentModel()
     {
         var document = CreateDocument();
@@ -137,6 +181,62 @@ public sealed class DocumentModelTests
         Assert.Equal("42", result.Metadata["tableId"]);
         Assert.Equal(3, result.Metadata["rowCount"]);
         Assert.Equal(2, result.Metadata["columnCount"]);
+    }
+
+    [Fact]
+    public void AppendTableAppliesConfiguredDefaultTablePreset()
+    {
+        var document = CreateDocument();
+        var context = new DocumentOperationContext(
+            document,
+            new Dictionary<string, TextStyleDefinition>(StringComparer.OrdinalIgnoreCase));
+        var handler = new AppendTableOperationHandler(new DocumentAutomationOptions
+        {
+            TableStylePresets =
+            [
+                new TableStylePresetDefinition
+                {
+                    Name = "Professional Blue",
+                    HeaderStyle = new TextStyleDefinition
+                    {
+                        Bold = true,
+                        ColorHex = "#FFFFFF"
+                    },
+                    HeaderCellStyle = new CellStyleDefinition
+                    {
+                        BackgroundColorHex = "#1F4E79"
+                    },
+                    BodyStyle = new TextStyleDefinition
+                    {
+                        FontSize = 10,
+                        FontSizeUnit = "pt",
+                        ColorHex = "#111827"
+                    },
+                    BodyCellStyle = new CellStyleDefinition
+                    {
+                        BackgroundColorHex = "#FFFFFF"
+                    }
+                }
+            ]
+        });
+
+        var result = handler.Apply(context, new DocumentOperation
+        {
+            Type = TableCapabilityPack.AppendTable,
+            TableId = "45",
+            Rows =
+            [
+                ["Item", "Price"],
+                ["Support", "$100"]
+            ]
+        }, 0);
+
+        var table = document.Sections[0].Blocks[0].Table;
+        Assert.Equal("Professional Blue", table?.StyleName);
+        Assert.Equal("#1F4E79", table?.Rows[0].Cells[0].CellStyle?.BackgroundColorHex);
+        Assert.True(table?.Rows[0].Cells[0].Blocks[0].Paragraph?.Runs[0].Style?.Bold);
+        Assert.Equal("#FFFFFF", table?.Rows[1].Cells[0].CellStyle?.BackgroundColorHex);
+        Assert.Equal("Professional Blue", result.Metadata["styleName"]);
     }
 
     [Fact]
@@ -777,6 +877,266 @@ public sealed class DocumentModelTests
         Assert.Single(compiled.Operations[1].Runs);
         Assert.Equal("Model First", compiled.Operations[1].Runs[0].Text);
         Assert.Equal("sales", compiled.Operations[2].Rows[0][1]);
+    }
+
+    [Fact]
+    public void DocumentModelCompilerAppliesConfiguredDefaultsToPlainModel()
+    {
+        var request = new RenderDocumentModelRequest
+        {
+            CreateIfMissing = true,
+            Document = new Document
+            {
+                Id = "defaults-doc",
+                Title = "Defaults Report",
+                Sections =
+                [
+                    new Section
+                    {
+                        Id = "section-1",
+                        Header = new HeaderFooter
+                        {
+                            Type = "header",
+                            Blocks =
+                            [
+                                new DocumentBlock
+                                {
+                                    Type = "paragraph",
+                                    Paragraph = new Paragraph
+                                    {
+                                        Runs = [new Run { Text = "Document Header" }]
+                                    }
+                                }
+                            ]
+                        },
+                        Blocks =
+                        [
+                            new DocumentBlock
+                            {
+                                Type = "paragraph",
+                                Paragraph = new Paragraph
+                                {
+                                    Runs = [new Run { Text = "Plain body paragraph." }]
+                                }
+                            },
+                            new DocumentBlock
+                            {
+                                Type = "table",
+                                Table = new Table
+                                {
+                                    Rows =
+                                    [
+                                        new TableRow
+                                        {
+                                            Cells =
+                                            [
+                                                CreateTextCell("cell-1", "Name"),
+                                                CreateTextCell("cell-2", "Value")
+                                            ]
+                                        },
+                                        new TableRow
+                                        {
+                                            Cells =
+                                            [
+                                                CreateTextCell("cell-3", "North"),
+                                                CreateTextCell("cell-4", "42")
+                                            ]
+                                        }
+                                    ]
+                                }
+                            }
+                        ]
+                    }
+                ]
+            }
+        };
+        var options = new DocumentAutomationOptions
+        {
+            DefaultParagraphStyleName = "Body",
+            StyleRoles = new StyleRoleDefinition
+            {
+                Title = "Title",
+                Body = "Body"
+            },
+            TableStylePresets =
+            [
+                new TableStylePresetDefinition
+                {
+                    Name = "Professional Blue"
+                }
+            ]
+        };
+
+        var operations = DocumentModelOperationCompiler.Compile(request, options).Operations;
+
+        Assert.Equal(HeaderFooterCapabilityPack.SetHeaderFooter, operations[0].Type);
+        Assert.Equal("Body", operations[0].StyleName);
+        Assert.Equal(BasicTextCapabilityPack.AppendParagraph, operations[1].Type);
+        Assert.Equal("Defaults Report", operations[1].Text);
+        Assert.Equal("Title", operations[1].StyleName);
+        Assert.Equal(BasicTextCapabilityPack.AppendParagraph, operations[2].Type);
+        Assert.Equal("Body", operations[2].StyleName);
+        Assert.Equal(TableCapabilityPack.AppendTable, operations[3].Type);
+        Assert.Equal("10", operations[3].TableId);
+        Assert.Equal(TableCapabilityPack.ApplyTableStylePreset, operations[4].Type);
+        Assert.Equal("10", operations[4].TableId);
+        Assert.Equal("Professional Blue", operations[4].StyleName);
+    }
+
+    [Fact]
+    public void DocumentModelCompilerPreservesSimpleTableCellStylesAsFormatOperations()
+    {
+        var request = new RenderDocumentModelRequest
+        {
+            Document = new Document
+            {
+                Sections =
+                [
+                    new Section
+                    {
+                        Blocks =
+                        [
+                            new DocumentBlock
+                            {
+                                Type = "table",
+                                Table = new Table
+                                {
+                                    Id = "10",
+                                    Rows =
+                                    [
+                                        new TableRow
+                                        {
+                                            Cells =
+                                            [
+                                                new TableCell
+                                                {
+                                                    CellStyle = new CellStyleDefinition
+                                                    {
+                                                        BackgroundColorHex = "#FFC0CB"
+                                                    },
+                                                    Blocks =
+                                                    [
+                                                        new DocumentBlock
+                                                        {
+                                                            Type = "paragraph",
+                                                            Paragraph = new Paragraph
+                                                            {
+                                                                Runs =
+                                                                [
+                                                                    new Run
+                                                                    {
+                                                                        Text = "Key",
+                                                                        Style = new TextStyleDefinition
+                                                                        {
+                                                                            FontSize = 20,
+                                                                            FontSizeUnit = "pt"
+                                                                        }
+                                                                    }
+                                                                ]
+                                                            }
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            }
+                        ]
+                    }
+                ]
+            }
+        };
+        var options = new DocumentAutomationOptions
+        {
+            TableStylePresets = [new TableStylePresetDefinition { Name = "Professional Blue" }]
+        };
+
+        var compiled = DocumentModelOperationCompiler.CompileDetailed(request, options);
+
+        Assert.Empty(compiled.Warnings);
+        Assert.Equal(TableCapabilityPack.AppendTable, compiled.Request.Operations[0].Type);
+        Assert.Equal(TableCapabilityPack.ApplyTableStylePreset, compiled.Request.Operations[1].Type);
+        Assert.Equal(TableCapabilityPack.FormatTableCell, compiled.Request.Operations[2].Type);
+        Assert.Equal("#FFC0CB", compiled.Request.Operations[2].CellStyle?.BackgroundColorHex);
+        Assert.Equal(20, compiled.Request.Operations[2].Style?.FontSize);
+        Assert.Equal("pt", compiled.Request.Operations[2].Style?.FontSizeUnit);
+    }
+
+    [Fact]
+    public void DocumentModelCompilerWarnsForUnsupportedRichTableCellContent()
+    {
+        var request = new RenderDocumentModelRequest
+        {
+            Document = new Document
+            {
+                Sections =
+                [
+                    new Section
+                    {
+                        Blocks =
+                        [
+                            new DocumentBlock
+                            {
+                                Type = "table",
+                                Table = new Table
+                                {
+                                    Id = "10",
+                                    Rows =
+                                    [
+                                        new TableRow
+                                        {
+                                            Cells =
+                                            [
+                                                new TableCell
+                                                {
+                                                    ColumnSpan = 2,
+                                                    Blocks =
+                                                    [
+                                                        new DocumentBlock
+                                                        {
+                                                            Type = "paragraph",
+                                                            Paragraph = new Paragraph
+                                                            {
+                                                                Runs =
+                                                                [
+                                                                    new Run { Text = "Plain " },
+                                                                    new Run
+                                                                    {
+                                                                        Text = "styled",
+                                                                        Style = new TextStyleDefinition { Bold = true }
+                                                                    }
+                                                                ]
+                                                            }
+                                                        },
+                                                        new DocumentBlock
+                                                        {
+                                                            Type = "field",
+                                                            Field = new Field
+                                                            {
+                                                                Type = "merge",
+                                                                Name = "CustomerName"
+                                                            }
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            }
+                        ]
+                    }
+                ]
+            }
+        };
+
+        var compiled = DocumentModelOperationCompiler.CompileDetailed(request);
+
+        Assert.Contains(compiled.Warnings, warning => warning.Contains("columnSpan", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(compiled.Warnings, warning => warning.Contains("block type 'field'", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(compiled.Warnings, warning => warning.Contains("mixed styled and unstyled runs", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(compiled.Request.Operations, operation => operation.Type == TableCapabilityPack.FormatTableCell);
     }
 
     [Fact]

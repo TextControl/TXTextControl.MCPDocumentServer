@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using DocumentModel = TxTextControl.McpServer.Models.DocumentModel;
 using TxTextControl.McpServer.Models.Requests;
 using TxTextControl.McpServer.Models.Responses;
@@ -74,9 +75,9 @@ public sealed class AppendMergeFieldOperationHandler : IDocumentOperationHandler
 
             if (visibleText.Length > 0)
             {
-                tx.Selection = new Selection(insertionIndex, visibleText.Length);
+                SelectInsertedFieldText(tx, target, field, insertionIndex, visibleText.Length);
                 var selection = tx.Selection;
-                DocumentOperationFormatter.ApplyStyle(selection, context.GetDefaultTextStyle());
+                DocumentOperationFormatter.ApplyStyle(selection, ResolveTargetTextStyle(context, target));
                 tx.Selection = selection;
             }
 
@@ -220,6 +221,52 @@ public sealed class AppendMergeFieldOperationHandler : IDocumentOperationHandler
         var cellInsertionIndex = Math.Max(0, cell.Start - 1 + offset);
         tx.Selection = new Selection(cellInsertionIndex, 0);
         return cellInsertionIndex;
+    }
+
+    private static DocumentModel.TextStyleDefinition ResolveTargetTextStyle(
+        DocumentOperationContext context,
+        MergeFieldTarget target)
+    {
+        if (target.Kind == MergeFieldTargetKind.TableCell)
+        {
+            var modelTable = TableOperationUtilities.TryGetModelTable(context.Document, target.TableId!.Value.ToString());
+            if (modelTable is not null
+                && target.RowIndex!.Value < modelTable.Rows.Count
+                && target.ColumnIndex!.Value < modelTable.Rows[target.RowIndex.Value].Cells.Count)
+            {
+                var modelCell = modelTable.Rows[target.RowIndex.Value].Cells[target.ColumnIndex.Value];
+                var runStyle = modelCell.Blocks
+                    .Select(block => block.Paragraph)
+                    .Where(paragraph => paragraph is not null)
+                    .SelectMany(paragraph => paragraph!.Runs)
+                    .Select(run => run.Style)
+                    .FirstOrDefault(style => style is not null);
+
+                if (runStyle is not null)
+                {
+                    return runStyle;
+                }
+            }
+        }
+
+        return context.GetDefaultTextStyle();
+    }
+
+    private static void SelectInsertedFieldText(
+        ServerTextControl tx,
+        MergeFieldTarget target,
+        ApplicationField field,
+        int insertionIndex,
+        int visibleTextLength)
+    {
+        if (target.Kind == MergeFieldTargetKind.TableCell)
+        {
+            var table = TableOperationUtilities.GetTxTable(tx, target.TableId!.Value);
+            TableOperationUtilities.GetTxCell(table, target.RowIndex!.Value, target.ColumnIndex!.Value).Select();
+            return;
+        }
+
+        tx.Selection = new Selection(insertionIndex, visibleTextLength);
     }
 
     private static int GetDocumentEndInsertionIndex(string? text)
