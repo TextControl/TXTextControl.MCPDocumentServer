@@ -127,7 +127,7 @@ public sealed class CapabilityPackTests
 
         Assert.Equal(BasicTextCapabilityPack.PackName, pack.Name);
         Assert.True(pack.Enabled);
-        Assert.Equal(6, pack.OperationTypes.Count);
+        Assert.Equal(9, pack.OperationTypes.Count);
         Assert.True(media.Enabled);
         Assert.Single(media.OperationTypes);
         Assert.True(tables.Enabled);
@@ -188,6 +188,9 @@ public sealed class CapabilityPackTests
         var paragraphFormat = Assert.Single(descriptors, descriptor => descriptor.Type == BasicTextCapabilityPack.FormatParagraphs);
         Assert.True(paragraphFormat.Enabled);
         Assert.Contains("paragraph", paragraphFormat.RequiredProperties);
+        Assert.Contains("matchText", paragraphFormat.OptionalProperties);
+        Assert.Contains("nearTextPosition", paragraphFormat.OptionalProperties);
+        Assert.Contains("allParagraphs", paragraphFormat.OptionalProperties);
         var tableColumn = Assert.Single(descriptors, descriptor => descriptor.Type == TableCapabilityPack.FormatTableColumn);
         Assert.True(tableColumn.Enabled);
         Assert.Contains("width", tableColumn.RequiredProperties);
@@ -314,15 +317,29 @@ public sealed class CapabilityPackTests
             ]
         };
         var registry = CreateRegistry(options);
-        var guide = new AuthoringGuideService(registry, Microsoft.Extensions.Options.Options.Create(options)).Build();
+        var service = new AuthoringGuideService(registry, Microsoft.Extensions.Options.Options.Create(options));
+        var guide = service.Build();
 
-        Assert.Equal("render_document_model", guide.ToolMap.CreateModelFirst);
+        Assert.Equal("create_document", guide.ToolMap.CreateModelFirst);
+        Assert.Equal("create_document_from_markdown", guide.ToolMap.CreateMarkdown);
+        Assert.Equal("inspect_document", guide.ToolMap.InspectPrimary);
+        Assert.Equal("edit_document", guide.ToolMap.EditPrimary);
+        Assert.Equal("convert_document", guide.ToolMap.Convert);
         Assert.Equal("apply_operations", guide.ToolMap.EditOperationFirst);
-        Assert.Equal("get_as_base64", guide.ToolMap.Export);
+        Assert.Equal("create_document_export", guide.ToolMap.Export);
+        Assert.Equal("list_document_recipes", guide.ToolMap.ListRecipes);
+        Assert.Equal("create_document_from_recipe", guide.ToolMap.CreateFromRecipe);
+        Assert.Equal("apply_document_preset_styles", guide.ToolMap.StyleImported);
         Assert.Contains("docx", guide.ValueSets["outputFormats"]);
+        Assert.Contains("rtf", guide.ValueSets["outputFormats"]);
+        Assert.Contains("txt", guide.ValueSets["outputFormats"]);
         Assert.Contains("Letter", guide.ValueSets["pageSizes"]);
         Assert.Contains("paragraph", guide.DocumentModelContract.SupportedBlockTypes);
         Assert.Contains("field", guide.DocumentModelContract.SupportedBlockTypes);
+        string minimalShapeJson = System.Text.Json.JsonSerializer.Serialize(guide.DocumentModelContract.MinimalDocumentShape);
+        Assert.DoesNotContain("pageLayout", minimalShapeJson, StringComparison.Ordinal);
+        Assert.DoesNotContain("styles", minimalShapeJson, StringComparison.Ordinal);
+        Assert.Contains("\"role\":\"body\"", minimalShapeJson, StringComparison.Ordinal);
         Assert.Contains(guide.OperationSchemas, schema => schema.Type == TableCapabilityPack.AppendTable);
         Assert.Contains(guide.StylePresets, style => style.Name == "Body" && style.FontName == "Arial");
         Assert.Contains(guide.TableStylePresets, preset => preset.Name == "Professional Blue");
@@ -330,9 +347,26 @@ public sealed class CapabilityPackTests
         Assert.Contains("styleName", guide.StylePolicy.PropertiesToOmitUnlessExplicitlyRequested);
         Assert.Contains(guide.StylePolicy.AutomaticDefaults, value => value.Contains("document.title", StringComparison.OrdinalIgnoreCase));
         Assert.True(guide.SessionPolicy.ReuseSessionForFollowUpEdits);
+        Assert.Contains("inspect_document", guide.SessionPolicy.RecommendedInspectionToolsBeforeEditing);
+        Assert.Contains(guide.RecommendedWorkflow, item => item.StartsWith("QUESTION:", StringComparison.Ordinal));
+        Assert.Contains(guide.RecommendedWorkflow, item => item.StartsWith("EDIT:", StringComparison.Ordinal));
+        Assert.Contains(guide.RecommendedWorkflow, item => item.StartsWith("CONVERT:", StringComparison.Ordinal));
+        Assert.Contains(guide.RecommendedWorkflow, item => item.StartsWith("CREATE:", StringComparison.Ordinal));
         Assert.Contains("change", guide.SessionPolicy.FollowUpEditTriggers);
         Assert.Contains("get_document_tables", guide.SessionPolicy.RecommendedInspectionToolsBeforeEditing);
         Assert.Contains(guide.Recipes, recipe => recipe.Name == "invoice-template-mail-merge");
+        Assert.Equal(guide.Recipes.Count, service.GetRecipes().Count);
+        Assert.Equal(
+            "invoice-template-mail-merge",
+            service.GetRecipe("INVOICE-TEMPLATE-MAIL-MERGE").Name);
+        var invoiceRecipe = service.GetRecipe("invoice-template-mail-merge");
+        string invoiceRecipeJson = System.Text.Json.JsonSerializer.Serialize(invoiceRecipe.ExampleRequest);
+        Assert.Equal(
+            ["create_document_from_recipe", "merge_template", "create_document_export"],
+            invoiceRecipe.ToolSequence);
+        Assert.Contains("Subtotal", invoiceRecipeJson, StringComparison.Ordinal);
+        Assert.Contains("PaymentTerms", invoiceRecipeJson, StringComparison.Ordinal);
+        Assert.Throws<ArgumentException>(() => service.GetRecipe("unknown-recipe"));
         Assert.Contains(guide.BestPractices, practice => practice.Contains("Set page size", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(guide.BestPractices, practice => practice.Contains("Style omission policy", StringComparison.OrdinalIgnoreCase));
     }

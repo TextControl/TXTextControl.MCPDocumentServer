@@ -409,29 +409,33 @@
     <link rel="stylesheet" href="/css/mcp-admin.css" />
 </head>
 <body>
+    <div class="ambient ambient-one"></div>
+    <div class="ambient ambient-two"></div>
     <div class="shell">
         <aside>
             <div class="brand">
-                <img class="brand-logo" src="/assets/tx-text-control-dotnet-server.svg" alt="TX Text Control .NET Server" />
-                <div>
+                <img class="brand-logo" src="/assets/txai.svg" alt="Text Control AI" />
+                <div class="brand-copy">
                     <strong>MCP Document Server</strong>
-                    <span>Beta 1 admin</span>
+                    <span>Administration</span>
                 </div>
             </div>
             <nav aria-label="Admin navigation">
                 <a class="active" href="/admin">Automation</a>
-                <a href="/admin/styles">Style Presets</a>
-                <a href="/admin/automation">Raw JSON</a>
+                <a href="/admin/settings">Settings</a>
+                <a href="/admin/styles">Style presets</a>
                 <a href="/admin/mcp">MCP endpoint</a>
-                <a href="/admin/logout">Logout</a>
+                <a href="/admin/automation">JSON</a>
+                <a href="/admin/logout">Sign out</a>
             </nav>
         </aside>
         <main>
             <form method="post">
                 <div class="topbar">
                     <div>
-                        <img class="top-logo" src="/assets/tx-text-control-dotnet-server.svg" alt="TX Text Control .NET Server" />
-                        <h1>Document Automation Beta 1</h1>
+                        <img class="top-logo" src="/assets/txai.svg" alt="Text Control AI" />
+                        <span class="eyebrow">MCP CAPABILITIES</span>
+                        <h1>Document automation</h1>
                         <p class="subtle">Control which capability packs and individual MCP document operations are available to AI clients.</p>
                     </div>
                     <div class="actions">
@@ -455,8 +459,8 @@
                         <strong>@Model.EnabledOperationCount / @Model.TotalOperationCount</strong>
                     </div>
                     <div class="stat">
-                        <span>Release Channel</span>
-                        <strong>Beta 1</strong>
+                        <span>Configuration</span>
+                        <strong>Live</strong>
                     </div>
                 </section>
 
@@ -533,6 +537,7 @@
                 </div>
             </form>
         </main>
+        <footer class="admin-footer"><span><strong>Text Control</strong> · Document processing for intelligent applications</span><span>TX Text Control Document MCP Server</span></footer>
     </div>
 </body>
 </html>

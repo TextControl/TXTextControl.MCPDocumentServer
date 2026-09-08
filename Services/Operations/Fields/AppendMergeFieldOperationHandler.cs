@@ -16,79 +16,112 @@ public sealed class AppendMergeFieldOperationHandler : IDocumentOperationHandler
     {
         Type = FieldsCapabilityPack.AppendMergeField,
         CapabilityPack = FieldsCapabilityPack.PackName,
-        Description = "Appends or inserts a Word-compatible MERGEFIELD ApplicationField at the end of the document or into a table cell.",
-        Intent = "Use when creating mail merge templates with named placeholders, including placeholders inside table cells.",
+        Description = "Inserts real Word-compatible MERGEFIELD ApplicationFields at deterministic positions throughout a document.",
+        Intent = "Use for named MailMerge placeholders. To replace existing placeholder/name text, use matchText with replaceAll or occurrenceIndex; never insert '{{name}}' as ordinary text.",
         RequiredProperties = ["type", "fieldName"],
-        OptionalProperties = ["fieldText", "parameters", "tableId", "rowIndex", "columnIndex", "placement"],
+        OptionalProperties = ["fieldText", "parameters", "matchText", "occurrenceIndex", "nearTextPosition", "replaceAll", "matchCase", "wholeWord", "start", "length", "expectedText", "textPosition", "paragraphIndex", "tableId", "rowIndex", "columnIndex", "headerFooterType", "sectionIndex", "placement"],
         Properties = new()
         {
-            ["fieldName"] = "Merge field name. Stored as the first MERGEFIELD parameter.",
-            ["fieldText"] = "Optional visible placeholder text. Defaults to the field name.",
-            ["parameters"] = "Optional full ApplicationField parameters. If omitted, [fieldName] is used.",
-            ["tableId"] = "Optional target table id. When set, rowIndex and columnIndex are required.",
-            ["rowIndex"] = "Optional zero-based target table row index.",
-            ["columnIndex"] = "Optional zero-based target table column index.",
-            ["placement"] = "Optional target placement: end, start, or replace. Defaults to end."
+            ["fieldName"] = "Merge field name stored as the first MERGEFIELD parameter.",
+            ["fieldText"] = "Visible placeholder text. Defaults to fieldName.",
+            ["parameters"] = "Optional complete ApplicationField parameter list. Defaults to [fieldName].",
+            ["matchText"] = "Replaces matching body text with a real merge field. Use replaceAll=true for every occurrence or occurrenceIndex for one.",
+            ["nearTextPosition"] = "Selects the match nearest this approximate browser-editor position. Use with matchText; do not combine with replaceAll or occurrenceIndex.",
+            ["start"] = "Zero-based body character start. Requires length and should include expectedText.",
+            ["length"] = "Character count replaced by the field.",
+            ["expectedText"] = "Expected current text for a start/length replacement; the operation fails if it differs.",
+            ["textPosition"] = "Zero-based insertion position in the body, or relative to a targeted table cell/header/footer.",
+            ["paragraphIndex"] = "Zero-based paragraph target used with placement start, end, or replace.",
+            ["tableId"] = "Table target; rowIndex and columnIndex are required.",
+            ["headerFooterType"] = "Header/footer target: header, footer, firstPageHeader, firstPageFooter, evenHeader, or evenFooter.",
+            ["placement"] = "For paragraph/cell/header/footer targets: start, end, or replace. Defaults to end."
         },
         Example = new()
         {
             ["type"] = FieldsCapabilityPack.AppendMergeField,
-            ["fieldName"] = "CustomerName",
-            ["fieldText"] = "Customer Name",
-            ["tableId"] = "10",
-            ["rowIndex"] = 1,
-            ["columnIndex"] = 0,
-            ["placement"] = "replace"
+            ["fieldName"] = "PartyName",
+            ["fieldText"] = "Party Name",
+            ["matchText"] = "Acme Corporation",
+            ["replaceAll"] = true
         },
-        ModelEffects = ["Adds a field block with type 'merge' either to document.sections[].blocks[] or to a table cell's blocks."],
+        ModelEffects = ["Creates actual MERGEFIELD markup; positional body fields remain authoritative in the physical TX document."],
         RequiresTxExecution = true
     };
 
     public OperationResult Apply(DocumentOperationContext context, DocumentOperation operation, int index)
     {
-        var fieldName = RequireFieldName(operation.FieldName);
-        var parameters = NormalizeParameters(operation.Parameters, fieldName);
-        var visibleText = string.IsNullOrWhiteSpace(operation.FieldText)
-            ? fieldName
-            : operation.FieldText!.Trim();
-        var fieldId = string.IsNullOrWhiteSpace(operation.FieldId)
-            ? Guid.NewGuid().ToString("N")
-            : operation.FieldId!.Trim();
+        string fieldName = RequireFieldName(operation.FieldName);
+        List<string> parameters = NormalizeParameters(operation.Parameters, fieldName);
+        string visibleText = string.IsNullOrWhiteSpace(operation.FieldText) ? fieldName : operation.FieldText!.Trim();
+        string fieldId = string.IsNullOrWhiteSpace(operation.FieldId) ? Guid.NewGuid().ToString("N") : operation.FieldId!.Trim();
+        FieldInsertionTarget target = FieldInsertionUtilities.Resolve(operation, allowMatch: true, allowHeaderFooter: true);
+        int insertedCount = 0;
+        List<Dictionary<string, object?>> insertedRanges = [];
 
-        var target = ResolveTarget(operation);
-
-        if (context.TryGetTextControl(out var tx))
+        if (context.TryGetTextControl(out ServerTextControl tx))
         {
-            var field = new ApplicationField(
-                ApplicationFieldFormat.MSWord,
-                "MERGEFIELD",
-                visibleText,
-                parameters.ToArray());
-
-            var insertionIndex = SetInsertionPoint(context, tx, target);
-
-            if (!tx.ApplicationFields.Add(field))
+            if (target.Kind == FieldInsertionTargetKind.HeaderFooter)
             {
-                throw new InvalidOperationException(
-                    $"TX Text Control could not insert merge field '{fieldName}' at position {insertionIndex} (text length {(tx.Text ?? string.Empty).Length}, correction {context.DocumentPositionCorrection}).");
+                HeaderFooter headerFooter = FieldInsertionUtilities.GetOrCreateHeaderFooter(tx, target.HeaderFooterType!.Value);
+                FieldInsertionUtilities.PrepareHeaderFooterSelection(headerFooter, target);
+                AddField(headerFooter.ApplicationFields, fieldName, visibleText, parameters);
+                insertedCount = 1;
             }
-
-            if (visibleText.Length > 0)
+            else
             {
-                SelectInsertedFieldText(tx, target, field, insertionIndex, visibleText.Length);
-                var selection = tx.Selection;
-                DocumentOperationFormatter.ApplyStyle(selection, ResolveTargetTextStyle(context, target));
-                tx.Selection = selection;
-            }
-
-            if (target.Kind == MergeFieldTargetKind.DocumentEnd)
-            {
-                context.InlineDocumentEndInsertionIndex = insertionIndex + visibleText.Length;
-                context.HasOpenParagraph = true;
+                IReadOnlyList<FieldInsertionRange> ranges = FieldInsertionUtilities.ResolveBodyRanges(tx, target);
+                foreach (FieldInsertionRange range in ranges.OrderByDescending(range => range.Start))
+                {
+                    FieldInsertionUtilities.PrepareSelection(tx, range);
+                    AddField(tx.ApplicationFields, fieldName, visibleText, parameters);
+                    insertedRanges.Add(new Dictionary<string, object?>
+                    {
+                        ["start"] = range.Start,
+                        ["replacedLength"] = range.Length,
+                        ["insertedLength"] = visibleText.Length
+                    });
+                    insertedCount++;
+                }
             }
         }
 
-        var fieldBlock = new DocumentModel.DocumentBlock
+        DocumentModel.DocumentBlock fieldBlock = CreateModelField(fieldId, fieldName, visibleText, parameters, target);
+        AddModelField(context, target, fieldBlock);
+        string location = FieldInsertionUtilities.DescribeLocation(target);
+        return new OperationResult
+        {
+            Index = index,
+            Type = Type,
+            Detail = $"Inserted {insertedCount} real MERGEFIELD instance(s) named '{fieldName}' at {location}.",
+            TargetType = "field",
+            TargetId = target.ReplaceAll ? null : fieldId,
+            Location = location,
+            Metadata = new Dictionary<string, object?>
+            {
+                ["fieldId"] = fieldId,
+                ["fieldName"] = fieldName,
+                ["fieldType"] = "merge",
+                ["typeName"] = "MERGEFIELD",
+                ["parameters"] = parameters,
+                ["insertedFieldCount"] = insertedCount,
+                ["targetKind"] = target.Kind.ToString(),
+                ["placement"] = target.Placement.ToString().ToLowerInvariant(),
+                ["ranges"] = insertedRanges
+            }
+        };
+    }
+
+    private static void AddField(ApplicationFieldCollection collection, string fieldName, string visibleText, IReadOnlyList<string> parameters)
+    {
+        var field = new ApplicationField(ApplicationFieldFormat.MSWord, "MERGEFIELD", visibleText, parameters.ToArray());
+        if (!collection.Add(field))
+        {
+            throw new InvalidOperationException($"TX Text Control could not insert merge field '{fieldName}' at the selected position.");
+        }
+    }
+
+    private static DocumentModel.DocumentBlock CreateModelField(string fieldId, string fieldName, string visibleText, IReadOnlyList<string> parameters, FieldInsertionTarget target)
+        => new()
         {
             Type = "field",
             Field = new DocumentModel.Field
@@ -101,240 +134,46 @@ public sealed class AppendMergeFieldOperationHandler : IDocumentOperationHandler
                 {
                     ["format"] = "MSWord",
                     ["typeName"] = "MERGEFIELD",
-                    ["parameters"] = string.Join("|", parameters)
+                    ["parameters"] = string.Join("|", parameters),
+                    ["location"] = FieldInsertionUtilities.DescribeLocation(target)
                 }
             }
         };
 
-        string location;
-        if (target.Kind == MergeFieldTargetKind.TableCell)
-        {
-            var modelTable = TableOperationUtilities.GetModelTable(context.Document, target.TableId!.Value.ToString());
-            var modelCell = TableOperationUtilities.GetModelCell(modelTable, target.RowIndex!.Value, target.ColumnIndex!.Value);
-            if (target.Placement == MergeFieldPlacement.Replace)
-            {
-                modelCell.Blocks.Clear();
-            }
-
-            if (target.Placement == MergeFieldPlacement.Start)
-            {
-                modelCell.Blocks.Insert(0, fieldBlock);
-            }
-            else
-            {
-                modelCell.Blocks.Add(fieldBlock);
-            }
-
-            location = $"tables['{target.TableId}'].rows[{target.RowIndex}].cells[{target.ColumnIndex}].blocks";
-        }
-        else
-        {
-            var section = context.GetMainSection();
-            var blockIndex = section.Blocks.Count;
-            section.Blocks.Add(fieldBlock);
-            location = $"sections[0].blocks[{blockIndex}].field";
-        }
-
-        return new OperationResult
-        {
-            Index = index,
-            Type = Type,
-            Detail = target.Kind == MergeFieldTargetKind.TableCell
-                ? $"Inserted MERGEFIELD '{fieldName}' into table '{target.TableId}' cell ({target.RowIndex}, {target.ColumnIndex})."
-                : $"Appended MERGEFIELD '{fieldName}'.",
-            TargetType = "field",
-            TargetId = fieldId,
-            Location = location,
-            Metadata = new Dictionary<string, object?>
-            {
-                ["fieldId"] = fieldId,
-                ["fieldName"] = fieldName,
-                ["fieldType"] = "merge",
-                ["typeName"] = "MERGEFIELD",
-                ["parameters"] = parameters,
-                ["tableId"] = target.TableId?.ToString(),
-                ["rowIndex"] = target.RowIndex,
-                ["columnIndex"] = target.ColumnIndex,
-                ["placement"] = target.Placement.ToString().ToLowerInvariant()
-            }
-        };
-    }
-
-    private static MergeFieldTarget ResolveTarget(DocumentOperation operation)
+    private static void AddModelField(DocumentOperationContext context, FieldInsertionTarget target, DocumentModel.DocumentBlock fieldBlock)
     {
-        var placement = ResolvePlacement(operation.Placement);
-        var hasTableTarget = !string.IsNullOrWhiteSpace(operation.TableId)
-                             || operation.RowIndex.HasValue
-                             || operation.ColumnIndex.HasValue;
-        if (!hasTableTarget)
+        if (target.Kind == FieldInsertionTargetKind.TableCell)
         {
-            return new MergeFieldTarget(MergeFieldTargetKind.DocumentEnd, null, null, null, placement);
+            DocumentModel.Table table = TableOperationUtilities.GetModelTable(context.Document, target.TableId!.Value.ToString());
+            DocumentModel.TableCell cell = TableOperationUtilities.GetModelCell(table, target.RowIndex!.Value, target.ColumnIndex!.Value);
+            if (target.Placement == FieldInsertionPlacement.Replace) cell.Blocks.Clear();
+            if (target.Placement == FieldInsertionPlacement.Start) cell.Blocks.Insert(0, fieldBlock); else cell.Blocks.Add(fieldBlock);
         }
-
-        return new MergeFieldTarget(
-            MergeFieldTargetKind.TableCell,
-            TableOperationUtilities.RequireTableId(operation.TableId),
-            TableOperationUtilities.RequireIndex(operation.RowIndex, nameof(operation.RowIndex)),
-            TableOperationUtilities.RequireIndex(operation.ColumnIndex, nameof(operation.ColumnIndex)),
-            placement);
-    }
-
-    private static MergeFieldPlacement ResolvePlacement(string? placement)
-    {
-        if (string.IsNullOrWhiteSpace(placement))
+        else if (target.Kind == FieldInsertionTargetKind.DocumentEnd)
         {
-            return MergeFieldPlacement.End;
+            context.GetMainSection().Blocks.Add(fieldBlock);
         }
-
-        return placement.Trim().ToLowerInvariant() switch
+        else if (target.Kind == FieldInsertionTargetKind.HeaderFooter)
         {
-            "end" => MergeFieldPlacement.End,
-            "start" => MergeFieldPlacement.Start,
-            "replace" => MergeFieldPlacement.Replace,
-            _ => throw new ArgumentException("placement must be 'end', 'start', or 'replace'.")
-        };
-    }
-
-    private static int SetInsertionPoint(DocumentOperationContext context, ServerTextControl tx, MergeFieldTarget target)
-    {
-        if (target.Kind == MergeFieldTargetKind.DocumentEnd)
-        {
-            var insertionIndex = (tx.Text ?? string.Empty).Length;
-            tx.Selection = new Selection(insertionIndex, 0);
-            return insertionIndex;
+            DocumentModel.Section section = context.GetSection(target.SectionIndex);
+            DocumentModel.HeaderFooter model = target.HeaderFooterType is HeaderFooterType.Header or HeaderFooterType.FirstPageHeader or HeaderFooterType.EvenHeader
+                ? section.Header ??= new DocumentModel.HeaderFooter { Type = FieldInsertionUtilities.ToModelHeaderFooterName(target.HeaderFooterType.Value) }
+                : section.Footer ??= new DocumentModel.HeaderFooter { Type = FieldInsertionUtilities.ToModelHeaderFooterName(target.HeaderFooterType!.Value) };
+            if (target.Placement == FieldInsertionPlacement.Replace) model.Blocks.Clear();
+            if (target.Placement == FieldInsertionPlacement.Start) model.Blocks.Insert(0, fieldBlock); else model.Blocks.Add(fieldBlock);
         }
-
-        var table = TableOperationUtilities.GetTxTable(tx, target.TableId!.Value);
-        var cell = TableOperationUtilities.GetTxCell(table, target.RowIndex!.Value, target.ColumnIndex!.Value);
-        if (target.Placement == MergeFieldPlacement.Replace)
-        {
-            cell.Text = string.Empty;
-        }
-
-        var offset = target.Placement switch
-        {
-            MergeFieldPlacement.Start or MergeFieldPlacement.Replace => 0,
-            MergeFieldPlacement.End => cell.Text?.Length ?? 0,
-            _ => 0
-        };
-
-        var cellInsertionIndex = Math.Max(0, cell.Start - 1 + offset);
-        tx.Selection = new Selection(cellInsertionIndex, 0);
-        return cellInsertionIndex;
-    }
-
-    private static DocumentModel.TextStyleDefinition ResolveTargetTextStyle(
-        DocumentOperationContext context,
-        MergeFieldTarget target)
-    {
-        if (target.Kind == MergeFieldTargetKind.TableCell)
-        {
-            var modelTable = TableOperationUtilities.TryGetModelTable(context.Document, target.TableId!.Value.ToString());
-            if (modelTable is not null
-                && target.RowIndex!.Value < modelTable.Rows.Count
-                && target.ColumnIndex!.Value < modelTable.Rows[target.RowIndex.Value].Cells.Count)
-            {
-                var modelCell = modelTable.Rows[target.RowIndex.Value].Cells[target.ColumnIndex.Value];
-                var runStyle = modelCell.Blocks
-                    .Select(block => block.Paragraph)
-                    .Where(paragraph => paragraph is not null)
-                    .SelectMany(paragraph => paragraph!.Runs)
-                    .Select(run => run.Style)
-                    .FirstOrDefault(style => style is not null);
-
-                if (runStyle is not null)
-                {
-                    return runStyle;
-                }
-            }
-        }
-
-        return context.GetDefaultTextStyle();
-    }
-
-    private static void SelectInsertedFieldText(
-        ServerTextControl tx,
-        MergeFieldTarget target,
-        ApplicationField field,
-        int insertionIndex,
-        int visibleTextLength)
-    {
-        if (target.Kind == MergeFieldTargetKind.TableCell)
-        {
-            var table = TableOperationUtilities.GetTxTable(tx, target.TableId!.Value);
-            TableOperationUtilities.GetTxCell(table, target.RowIndex!.Value, target.ColumnIndex!.Value).Select();
-            return;
-        }
-
-        tx.Selection = new Selection(insertionIndex, visibleTextLength);
-    }
-
-    private static int GetDocumentEndInsertionIndex(string? text)
-    {
-        if (string.IsNullOrEmpty(text))
-        {
-            return 0;
-        }
-
-        if (text.EndsWith("\r\n", StringComparison.Ordinal))
-        {
-            return Math.Max(0, text.Length - 2);
-        }
-
-        if (text.EndsWith('\n') || text.EndsWith('\r'))
-        {
-            return Math.Max(0, text.Length - 1);
-        }
-
-        return text.Length;
     }
 
     internal static string RequireFieldName(string? fieldName)
     {
-        if (string.IsNullOrWhiteSpace(fieldName))
-        {
-            throw new ArgumentException("fieldName is required.");
-        }
-
+        if (string.IsNullOrWhiteSpace(fieldName)) throw new ArgumentException("fieldName is required.");
         return fieldName.Trim();
     }
 
     internal static List<string> NormalizeParameters(IReadOnlyList<string> parameters, string fieldName)
     {
-        var normalized = new List<string>();
-        foreach (var parameter in parameters)
-        {
-            if (!string.IsNullOrWhiteSpace(parameter))
-            {
-                normalized.Add(parameter.Trim());
-            }
-        }
-
-        if (normalized.Count == 0)
-        {
-            normalized.Add(fieldName);
-        }
-
+        List<string> normalized = parameters.Where(parameter => !string.IsNullOrWhiteSpace(parameter)).Select(parameter => parameter.Trim()).ToList();
+        if (normalized.Count == 0) normalized.Add(fieldName);
         return normalized;
     }
-
-    private enum MergeFieldTargetKind
-    {
-        DocumentEnd,
-        TableCell
-    }
-
-    private enum MergeFieldPlacement
-    {
-        End,
-        Start,
-        Replace
-    }
-
-    private sealed record MergeFieldTarget(
-        MergeFieldTargetKind Kind,
-        int? TableId,
-        int? RowIndex,
-        int? ColumnIndex,
-        MergeFieldPlacement Placement);
 }

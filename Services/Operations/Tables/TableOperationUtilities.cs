@@ -145,6 +145,23 @@ internal static class TableOperationUtilities
         {
             cell.CellStyle.Border = MergeBorder(cell.CellStyle.Border, style.Border);
         }
+
+
+        cell.CellStyle.PaddingLeft = style.PaddingLeft ?? cell.CellStyle.PaddingLeft;
+        cell.CellStyle.PaddingRight = style.PaddingRight ?? cell.CellStyle.PaddingRight;
+        cell.CellStyle.PaddingTop = style.PaddingTop ?? cell.CellStyle.PaddingTop;
+        cell.CellStyle.PaddingBottom = style.PaddingBottom ?? cell.CellStyle.PaddingBottom;
+        if (!string.IsNullOrWhiteSpace(style.PaddingUnit))
+        {
+            cell.CellStyle.PaddingUnit = style.PaddingUnit;
+        }
+
+        cell.CellStyle.HorizontalAlignment = string.IsNullOrWhiteSpace(style.HorizontalAlignment)
+            ? cell.CellStyle.HorizontalAlignment
+            : style.HorizontalAlignment;
+        cell.CellStyle.VerticalAlignment = string.IsNullOrWhiteSpace(style.VerticalAlignment)
+            ? cell.CellStyle.VerticalAlignment
+            : style.VerticalAlignment;
     }
 
     private static DocumentModel.CellBorderDefinition MergeBorder(

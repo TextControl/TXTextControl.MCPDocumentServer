@@ -4,21 +4,36 @@
     <AssemblyName>TxTextControl.McpServer</AssemblyName>
     <RootNamespace>TxTextControl.McpServer</RootNamespace>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IsPackable>false</IsPackable>
+    <PackageId>TXTextControl.McpServer.Host</PackageId>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <UserSecretsId>69b88ad5-c2d3-454c-b42d-449fea30afa4</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="ModelContextProtocol.AspNetCore" Version="1.2.0" />
-    <PackageReference Include="TXTextControl.Markdown.Core" Version="34.1.0-beta" />
-    <PackageReference Include="TXTextControl.TextControl.Core.SDK" Version="34.0.4" />
+    <ProjectReference Include="src/TXTextControl.McpServer/TXTextControl.McpServer.csproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Remove="Models\Requests\Converters\**" />
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+      <_Parameter1>TxTextControl.McpServer.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="Models\**;Options\**;Services\**;Tools\**;src\**;build\**;samples\**" />
+    <Content Remove="src\**;build\**;artifacts\**;samples\**" />
+    <None Remove="src\**;build\**;artifacts\**;samples\**" />
+    <EmbeddedResource Remove="src\**;build\**;artifacts\**;samples\**" />
     <Compile Remove="Tests\**\*.cs" />
+    <Compile Remove="Benchmarks\**\*.cs" />
     <Content Remove="Models\Requests\Converters\**" />
     <Content Remove="Tests\**\*" />
+    <Content Remove="Benchmarks\**\*" />
     <None Remove="Models\Requests\Converters\**" />
     <None Remove="Tests\**\*" />
+    <None Remove="Benchmarks\**\*" />
     <Compile Remove="**\bin\**\*;**\obj\**\*" />
     <Content Remove="**\bin\**\*;**\obj\**\*" />
     <EmbeddedResource Remove="Models\Requests\Converters\**" />

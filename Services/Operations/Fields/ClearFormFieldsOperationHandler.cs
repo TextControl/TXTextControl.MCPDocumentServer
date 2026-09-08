@@ -38,20 +38,29 @@ public sealed class ClearFormFieldsOperationHandler : IDocumentOperationHandler
         var removedTx = 0;
         if (context.TryGetTextControl(out var tx))
         {
-            while (tx.FormFields.Count > 0)
+            foreach (FieldContainer container in FieldInsertionUtilities.EnumerateFieldContainers(tx))
             {
-                var enumerator = tx.FormFields.GetEnumerator();
-                if (!enumerator.MoveNext())
+                while (container.Content.FormFields.Count > 0)
                 {
-                    break;
-                }
+                    var enumerator = container.Content.FormFields.GetEnumerator();
+                    if (!enumerator.MoveNext())
+                    {
+                        break;
+                    }
 
-                tx.FormFields.Remove((FormField)enumerator.Current, operation.KeepText);
-                removedTx++;
+                    container.Content.FormFields.Remove((FormField)enumerator.Current, operation.KeepText);
+                    removedTx++;
+                }
             }
         }
 
-        var removedModel = RemoveFormFieldBlocks(context.Document.Sections.SelectMany(section => section.Blocks).ToList());
+        var removedModel = 0;
+        foreach (var section in context.Document.Sections)
+        {
+            removedModel += RemoveFormFieldBlocks(section.Blocks);
+            if (section.Header is not null) removedModel += RemoveFormFieldBlocks(section.Header.Blocks);
+            if (section.Footer is not null) removedModel += RemoveFormFieldBlocks(section.Footer.Blocks);
+        }
 
         return new OperationResult
         {

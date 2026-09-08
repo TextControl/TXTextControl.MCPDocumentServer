@@ -3,6 +3,8 @@ using ModelContextProtocol.Server;
 using System.ComponentModel;
 using TxTextControl.McpServer.Models.Requests;
 using TxTextControl.McpServer.Services;
+using Microsoft.AspNetCore.Http;
+using TxTextControl.McpServer.Models.Responses;
 
 namespace TxTextControl.McpServer.Tools;
 
@@ -13,16 +15,18 @@ namespace TxTextControl.McpServer.Tools;
 public sealed class DocumentTools
 {
     private readonly DocumentWorkflowService _workflow;
+    private readonly IHttpContextAccessor _httpContextAccessor;
 
-    public DocumentTools(DocumentWorkflowService workflow)
+    public DocumentTools(DocumentWorkflowService workflow, IHttpContextAccessor httpContextAccessor)
     {
         _workflow = workflow;
+        _httpContextAccessor = httpContextAccessor;
     }
 
     /// <summary>
     /// Create a new, empty document session.
     /// </summary>
-    [McpServerTool, Description("Creates a new document session and initializes an empty document in TX internal format. Returns a generated sessionId that must be used in subsequent tools (for example format_text, get_text, search_text, get_as_base64, and delete_session). Use this as the starting point when you do not already have document content to load.")]
+    [McpServerTool(Name = "create_empty_document"), Description("Advanced lifecycle tool: creates an intentionally empty session with the configured default page layout. Do not use it for a user request to create a complete document; use create_document or a matching server-owned recipe instead.")]
     public object CreateDocument()
     {
         try
@@ -38,7 +42,7 @@ public sealed class DocumentTools
     /// <summary>
     /// Load base64 document content into a session.
     /// </summary>
-    [McpServerTool, Description("Loads a base64-encoded document into a session. If sessionId is provided, the existing session document is overwritten. If sessionId is omitted, a new session is created automatically. Request body must provide request.data (base64 content). Returns the target sessionId to continue with content tools.")]
+    [McpServerTool(Name = "load_document"), Description("Loads one uploaded base64 document without changing its content. Required: request.data. Optional request.sourceFormat: auto, tx, rtf, docx, html, pdf, md, or txt; specify it when known for deterministic import. Optional sessionId overwrites that session, otherwise a new session is created. Returns sessionId. After loading: use inspect_document for questions, edit_document for text changes, or convert_document for conversion.")]
     public object LoadFromBase64(LoadFromBase64Request request, string? sessionId = null)
     {
         try
@@ -54,12 +58,60 @@ public sealed class DocumentTools
     /// <summary>
     /// Export a session document as base64 in a requested output format.
     /// </summary>
-    [McpServerTool, Description("Exports the current session document as base64. Required fields: request.sessionId and request.format. Supported formats: tx, docx, pdf, html, md. Returns sessionId, normalized format, and base64Document. Use this tool as the final step when the caller needs downloadable file data.")]
+    [McpServerTool, Description("Exports the current session document as base64. Required fields: request.sessionId and request.format. Supported formats: tx, rtf, docx, pdf, html, md, txt. Returns sessionId, normalized format, and base64Document. Use this tool as the final step when the caller needs inline file data.")]
     public object GetAsBase64(GetAsBase64Request request)
     {
         try
         {
             return _workflow.GetAsBase64(request);
+        }
+        catch (Exception ex)
+        {
+            return ToolErrorMapper.Map(ex);
+        }
+    }
+
+    [McpServerTool(
+        Name = "convert_document",
+        ReadOnly = false,
+        Destructive = false,
+        Idempotent = false,
+        OpenWorld = false,
+        UseStructuredContent = true,
+        OutputSchemaType = typeof(DocumentExportResponse)),
+     Description("Converts a document with TX Text Control and performs no inspection, generation, rewriting, or styling. Provide exactly one source: request.sessionId for an already loaded document, or request.data plus optional request.sourceFormat for an uploaded document. Required request.outputFormat: tx, rtf, docx, pdf, html, md, or txt. Optional request.fileName. For 'convert X to Y', call only this tool and return its downloadUri.")]
+    public object ConvertDocument(ConvertDocumentRequest request)
+    {
+        try
+        {
+            DocumentExportResponse response = _workflow.ConvertDocument(request);
+            SetDownloadUri(response);
+            return response;
+        }
+        catch (Exception ex)
+        {
+            return ToolErrorMapper.Map(ex);
+        }
+    }
+
+    /// <summary>
+    /// Creates a document export that clients can download without Base64 encoding.
+    /// </summary>
+    [McpServerTool(
+        ReadOnly = false,
+        Destructive = false,
+        Idempotent = false,
+        OpenWorld = false,
+        UseStructuredContent = true,
+        OutputSchemaType = typeof(DocumentExportResponse)),
+     Description("Creates a server-side document export and returns a compact HTTPS/HTTP download link plus file metadata. Required: request.sessionId and request.format. Optional: request.fileName. Supported formats: tx, rtf, docx, pdf, html, md, txt. Prefer this over get_as_base64 for AI and high-performance clients.")]
+    public object CreateDocumentExport(CreateDocumentExportRequest request)
+    {
+        try
+        {
+            DocumentExportResponse response = _workflow.CreateDocumentExport(request);
+            SetDownloadUri(response);
+            return response;
         }
         catch (Exception ex)
         {
@@ -98,5 +150,13 @@ public sealed class DocumentTools
         {
             return ToolErrorMapper.Map(ex);
         }
+    }
+
+
+    private void SetDownloadUri(DocumentExportResponse response)
+    {
+        HttpRequest httpRequest = _httpContextAccessor.HttpContext?.Request
+            ?? throw new InvalidOperationException("The HTTP request context is unavailable.");
+        response.DownloadUri = $"{httpRequest.Scheme}://{httpRequest.Host}{httpRequest.PathBase}/exports/{Uri.EscapeDataString(response.SessionId)}/{response.ExportId}";
     }
 }

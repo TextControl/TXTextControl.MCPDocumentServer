@@ -162,12 +162,7 @@ public static class TextOccurrenceUtilities
     }
 
     private static IEnumerable<DocumentModel.Paragraph> EnumerateParagraphs(DocumentModel.Document document)
-        => document.Sections
-            .SelectMany(section => section.Blocks)
-            .Where(block => string.Equals(block.Type, "paragraph", StringComparison.OrdinalIgnoreCase))
-            .Select(block => block.Paragraph)
-            .Where(paragraph => paragraph is not null)
-            .Select(paragraph => paragraph!);
+        => ParagraphTargetUtilities.EnumerateModelParagraphs(document);
 
     private static List<TextOccurrence> FindStringOccurrences(
         string text,

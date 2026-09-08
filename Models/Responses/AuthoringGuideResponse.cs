@@ -27,6 +27,9 @@ public sealed class AuthoringGuideResponse
     [JsonPropertyName("defaultParagraphStyleName")]
     public string DefaultParagraphStyleName { get; set; } = "Body";
 
+    [JsonPropertyName("defaultPageLayout")]
+    public PageLayoutDefinition? DefaultPageLayout { get; set; }
+
     [JsonPropertyName("stylePresets")]
     public List<TextStyleDefinition> StylePresets { get; set; } = [];
 
@@ -90,17 +93,56 @@ public sealed class AuthoringToolMap
     [JsonPropertyName("discover")]
     public string Discover { get; set; } = "get_authoring_guide";
 
+    [JsonPropertyName("listRecipes")]
+    public string ListRecipes { get; set; } = "list_document_recipes";
+
+    [JsonPropertyName("createFromRecipe")]
+    public string CreateFromRecipe { get; set; } = "create_document_from_recipe";
+
     [JsonPropertyName("createModelFirst")]
-    public string CreateModelFirst { get; set; } = "render_document_model";
+    public string CreateModelFirst { get; set; } = "create_document";
+
+    [JsonPropertyName("createMarkdown")]
+    public string CreateMarkdown { get; set; } = "create_document_from_markdown";
+
+    [JsonPropertyName("inspectPrimary")]
+    public string InspectPrimary { get; set; } = "inspect_document";
+
+    [JsonPropertyName("editPrimary")]
+    public string EditPrimary { get; set; } = "edit_document";
+
+    [JsonPropertyName("inspectSection")]
+    public string InspectSection { get; set; } = "inspect_document_section";
+
+    [JsonPropertyName("replaceSection")]
+    public string ReplaceSection { get; set; } = "replace_document_section";
+
+    [JsonPropertyName("convert")]
+    public string Convert { get; set; } = "convert_document";
 
     [JsonPropertyName("editOperationFirst")]
     public string EditOperationFirst { get; set; } = "apply_operations";
 
+    [JsonPropertyName("formatParagraph")]
+    public string FormatParagraph { get; set; } = "format_paragraph";
+
+    [JsonPropertyName("formatTable")]
+    public string FormatTable { get; set; } = "format_table";
+
+    [JsonPropertyName("addTableRows")]
+    public string AddTableRows { get; set; } = "add_table_rows";
+
+    [JsonPropertyName("formatTextOccurrences")]
+    public string FormatTextOccurrences { get; set; } = "format_text_occurrences";
+
     [JsonPropertyName("export")]
-    public string Export { get; set; } = "get_as_base64";
+    public string Export { get; set; } = "create_document_export";
 
     [JsonPropertyName("loadExisting")]
-    public string LoadExisting { get; set; } = "load_from_base64";
+    public string LoadExisting { get; set; } = "load_document";
+
+    [JsonPropertyName("styleImported")]
+    public string StyleImported { get; set; } = "apply_document_preset_styles";
 
     [JsonPropertyName("mergeTemplate")]
     public string MergeTemplate { get; set; } = "merge_template";
@@ -112,7 +154,7 @@ public sealed class AuthoringToolMap
 public sealed class DocumentModelContractResponse
 {
     [JsonPropertyName("primaryTool")]
-    public string PrimaryTool { get; set; } = "render_document_model";
+    public string PrimaryTool { get; set; } = "create_document";
 
     [JsonPropertyName("fallbackTool")]
     public string FallbackTool { get; set; } = "apply_operations";

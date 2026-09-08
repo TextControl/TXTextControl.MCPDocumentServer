@@ -1,0 +1,17 @@
+<Project>
+  <!-- NuGet exposes this SDK path because the SDK contains tools. Its contentFiles
+       otherwise do not flow to apps that consume it only as a transitive dependency. -->
+  <ItemGroup Condition="'$(PkgTXTextControl_TextControl_Core_SDK)' != ''">
+    <None Remove="$(PkgTXTextControl_TextControl_Core_SDK)/contentFiles/any/any/Fonts/*.*" />
+    <None Include="$(PkgTXTextControl_TextControl_Core_SDK)/contentFiles/any/any/Fonts/*.*"
+          Link="Fonts/%(Filename)%(Extension)"
+          TargetPath="Fonts/%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest"
+          Pack="false" Visible="false" />
+  </ItemGroup>
+  <Target Name="ValidateTextControlMcpSdkFonts" BeforeTargets="PrepareForBuild">
+    <Error Condition="'$(PkgTXTextControl_TextControl_Core_SDK)' == '' or !Exists('$(PkgTXTextControl_TextControl_Core_SDK)/contentFiles/any/any/Fonts')"
+           Text="The TX Text Control SDK font assets are unavailable. Restore TXTextControl.TextControl.Core.SDK with its tools/content assets enabled before building the MCP host." />
+  </Target>
+</Project>

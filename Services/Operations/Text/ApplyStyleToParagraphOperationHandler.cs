@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using TxTextControl.McpServer.Models.DocumentModel;
 using TxTextControl.McpServer.Models.Requests;
 using TxTextControl.McpServer.Models.Responses;
+using TXTextControl;
 
 namespace TxTextControl.McpServer.Services.Operations;
 
@@ -14,14 +16,19 @@ public sealed class ApplyStyleToParagraphOperationHandler : IDocumentOperationHa
     {
         Type = BasicTextCapabilityPack.ApplyStyleToParagraph,
         CapabilityPack = BasicTextCapabilityPack.PackName,
-        Description = "Applies an existing paragraph style to a paragraph by zero-based paragraph index.",
+        Description = "Applies an existing paragraph style to paragraphs resolved by index, matching text, or an explicit all-paragraphs target.",
         Intent = "Use for follow-up style corrections on existing paragraphs.",
-        RequiredProperties = ["type", "styleName", "paragraphIndex"],
-        OptionalProperties = [],
+        RequiredProperties = ["type", "styleName"],
+        OptionalProperties = ["paragraphIndex", "startParagraphIndex", "endParagraphIndex", "matchText", "occurrenceIndex", "nearTextPosition", "replaceAll", "allParagraphs"],
         Properties = new()
         {
             ["styleName"] = "Existing style name.",
-            ["paragraphIndex"] = "Zero-based paragraph index in document order."
+            ["paragraphIndex"] = "Zero-based paragraph index in document order.",
+            ["startParagraphIndex"] = "First zero-based paragraph in an inclusive paragraph range.",
+            ["endParagraphIndex"] = "Last zero-based paragraph in an inclusive paragraph range.",
+            ["matchText"] = "Text inside the target paragraph.",
+            ["nearTextPosition"] = "Non-authoritative browser-position hint used to choose the closest match.",
+            ["allParagraphs"] = "Apply the style to every paragraph."
         },
         Example = new()
         {
@@ -35,51 +42,48 @@ public sealed class ApplyStyleToParagraphOperationHandler : IDocumentOperationHa
 
     public OperationResult Apply(DocumentOperationContext context, DocumentOperation operation, int index)
     {
-        if (!operation.ParagraphIndex.HasValue)
-        {
-            throw new ArgumentException("paragraphIndex is required for apply_style_to_paragraph.");
-        }
-
         if (string.IsNullOrWhiteSpace(operation.StyleName))
         {
             throw new ArgumentException("styleName is required for apply_style_to_paragraph.");
         }
 
-        var paragraphIndex = operation.ParagraphIndex.Value;
-        if (paragraphIndex < 0)
-        {
-            throw new ArgumentException("paragraphIndex must be greater than or equal to 0.");
-        }
-
-        var collectionIndex = paragraphIndex + 1;
         var tx = context.TextControl;
-        if (collectionIndex < 1 || collectionIndex > tx.Paragraphs.Count)
+        var targetIndexes = ParagraphTargetUtilities.ResolveTargetIndexes(tx, operation, allowImplicitAll: false);
+
+        ParagraphStyle? nativeStyle = DocumentOperationFormatter.FindParagraphStyle(tx, operation.StyleName);
+        TextStyleDefinition style;
+        if (nativeStyle is null)
         {
-            throw new ArgumentException("paragraphIndex is out of range.");
+            style = context.GetStyle(operation.StyleName);
+            style.Name = operation.StyleName.Trim();
+            nativeStyle = DocumentOperationFormatter.EnsureParagraphStyle(tx, style);
+        }
+        else
+        {
+            style = DocumentStyleUtilities.ToDefinition(nativeStyle);
+        }
+        string appliedStyleName = nativeStyle.Name;
+        foreach (int paragraphIndex in targetIndexes)
+        {
+            TXTextControl.Paragraph paragraph = tx.Paragraphs[paragraphIndex + 1];
+            paragraph.FormattingStyle = appliedStyleName;
         }
 
-        var style = context.GetStyle(operation.StyleName);
-        style.Name = operation.StyleName.Trim();
-        DocumentOperationFormatter.EnsureParagraphStyle(tx, style);
-        tx.Paragraphs[collectionIndex].FormattingStyle = style.Name;
-        if (style.Paragraph is not null)
+        var paragraphBlocks = ParagraphTargetUtilities
+            .EnumerateModelParagraphs(context.Document)
+            .ToList();
+        foreach (int paragraphIndex in targetIndexes)
         {
-            DocumentOperationFormatter.ApplyParagraphStyle(tx.Paragraphs[collectionIndex], style.Paragraph);
-        }
+            var paragraphBlock = paragraphBlocks.ElementAtOrDefault(paragraphIndex);
+            if (paragraphBlock is null)
+            {
+                continue;
+            }
 
-        var paragraphBlock = context.Document.Sections
-            .SelectMany(section => section.Blocks)
-            .Where(block => string.Equals(block.Type, "paragraph", StringComparison.OrdinalIgnoreCase))
-            .Select(block => block.Paragraph)
-            .Where(paragraph => paragraph is not null)
-            .ElementAtOrDefault(paragraphIndex);
-
-        if (paragraphBlock is not null)
-        {
-            paragraphBlock.StyleName = operation.StyleName.Trim();
+            paragraphBlock.StyleName = appliedStyleName;
             foreach (var run in paragraphBlock.Runs)
             {
-                run.StyleName = operation.StyleName.Trim();
+                run.StyleName = appliedStyleName;
             }
 
             paragraphBlock.ParagraphStyle = style.Paragraph;
@@ -89,15 +93,17 @@ public sealed class ApplyStyleToParagraphOperationHandler : IDocumentOperationHa
         {
             Index = index,
             Type = Type,
-            Detail = $"Applied style '{operation.StyleName}' to paragraph {paragraphIndex}.",
-            TargetType = "paragraph",
-            TargetId = paragraphBlock?.Id,
-            Location = $"paragraphs[{paragraphIndex}]",
+            Detail = targetIndexes.Count == 1
+                ? $"Applied style '{appliedStyleName}' to paragraph {targetIndexes[0]}."
+                : $"Applied style '{appliedStyleName}' to {targetIndexes.Count} paragraphs.",
+            TargetType = targetIndexes.Count == 1 ? "paragraph" : "paragraphs",
+            Location = targetIndexes.Count == 1 ? $"paragraphs[{targetIndexes[0]}]" : "paragraphs[*]",
             Metadata = new Dictionary<string, object?>
             {
-                ["paragraphIndex"] = paragraphIndex,
-                ["paragraphId"] = paragraphBlock?.Id,
-                ["styleName"] = operation.StyleName.Trim()
+                ["paragraphIndex"] = operation.ParagraphIndex,
+                ["paragraphIndexes"] = targetIndexes,
+                ["matchText"] = operation.MatchText,
+                ["styleName"] = appliedStyleName
             }
         };
     }

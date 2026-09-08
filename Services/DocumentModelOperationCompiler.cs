@@ -36,12 +36,13 @@ public static class DocumentModelOperationCompiler
         }
 
         var operations = new List<DocumentOperation>();
+        var warnings = new List<string>();
+        DocumentModelQualityNormalizer.Normalize(request.Document, options, warnings);
         var tableIds = CollectTableIds(request.Document);
         var defaultBodyStyleName = ResolveBodyStyleName(options);
         var titleStyleName = ResolveTitleStyleName(options);
         var defaultTableStyleName = ResolveDefaultTableStyleName(options);
         var styles = BuildStyleDictionary(request.Document, options);
-        var warnings = new List<string>();
 
         foreach (var style in request.Document.Styles)
         {
@@ -68,13 +69,14 @@ public static class DocumentModelOperationCompiler
                 });
             }
 
-            if (section.PageLayout is not null)
+            var pageLayout = MergePageLayout(section.PageLayout, options?.DefaultPageLayout);
+            if (pageLayout is not null)
             {
                 operations.Add(new DocumentOperation
                 {
                     Type = SectionCapabilityPack.SetSectionLayout,
                     SectionIndex = sectionIndex,
-                    PageLayout = section.PageLayout
+                    PageLayout = pageLayout
                 });
             }
 
@@ -108,7 +110,7 @@ public static class DocumentModelOperationCompiler
 
             foreach (var block in section.Blocks)
             {
-                operations.AddRange(CompileBlock(block, defaultBodyStyleName, defaultTableStyleName, tableIds, styles, warnings));
+                operations.AddRange(CompileBlock(block, options, defaultBodyStyleName, defaultTableStyleName, tableIds, styles, warnings));
             }
         }
 
@@ -131,6 +133,7 @@ public static class DocumentModelOperationCompiler
 
     private static IReadOnlyList<DocumentOperation> CompileBlock(
         DocumentModel.DocumentBlock block,
+        DocumentAutomationOptions? options,
         string? defaultBodyStyleName,
         string? defaultTableStyleName,
         HashSet<int> tableIds,
@@ -138,7 +141,7 @@ public static class DocumentModelOperationCompiler
         List<string> warnings)
         => block.Type.Trim().ToLowerInvariant() switch
         {
-            "paragraph" => [CompileParagraph(block.Paragraph, defaultBodyStyleName)],
+            "paragraph" => [CompileParagraph(block.Paragraph, options, defaultBodyStyleName)],
             "table" => CompileTable(block.Table, defaultTableStyleName, tableIds, styles, warnings),
             "image" => [CompileImage(block.Image)],
             "field" => [CompileField(block.Field)],
@@ -147,6 +150,7 @@ public static class DocumentModelOperationCompiler
 
     private static DocumentOperation CompileParagraph(
         DocumentModel.Paragraph? paragraph,
+        DocumentAutomationOptions? options,
         string? defaultBodyStyleName)
     {
         if (paragraph is null)
@@ -154,11 +158,8 @@ public static class DocumentModelOperationCompiler
             throw new ArgumentException("paragraph block requires paragraph content.");
         }
 
-        return new DocumentOperation
-        {
-            Type = "append_paragraph",
-            Text = string.Concat(paragraph.Runs.Select(run => run.Text ?? string.Empty)),
-            Runs = paragraph.Runs
+        List<DocumentModel.Run> runs = paragraph.Runs.Count > 0
+            ? paragraph.Runs
                 .Select(run => new DocumentModel.Run
                 {
                     Id = string.IsNullOrWhiteSpace(run.Id) ? Guid.NewGuid().ToString("N") : run.Id,
@@ -166,10 +167,25 @@ public static class DocumentModelOperationCompiler
                     StyleName = string.IsNullOrWhiteSpace(run.StyleName) ? null : run.StyleName.Trim(),
                     Style = run.Style
                 })
-                .ToList(),
-            StyleName = string.IsNullOrWhiteSpace(paragraph.StyleName)
-                ? defaultBodyStyleName
-                : paragraph.StyleName.Trim()
+                .ToList()
+            : paragraph.Text is null
+                ? []
+                :
+                [
+                    new DocumentModel.Run
+                    {
+                        Id = Guid.NewGuid().ToString("N"),
+                        Text = paragraph.Text
+                    }
+                ];
+
+        return new DocumentOperation
+        {
+            Type = "append_paragraph",
+            Text = string.Concat(runs.Select(run => run.Text)),
+            Runs = runs,
+            StyleName = ResolveParagraphStyleName(paragraph, options, defaultBodyStyleName),
+            Paragraph = MergeParagraphStyle(paragraph.ParagraphStyle, paragraph.Alignment)
         };
     }
 
@@ -186,12 +202,18 @@ public static class DocumentModelOperationCompiler
         }
 
         var tableId = ResolveTableId(table, tableIds);
+        var tableStyleName = string.IsNullOrWhiteSpace(table.StyleName)
+            ? defaultTableStyleName
+            : table.StyleName.Trim();
         var operations = new List<DocumentOperation>
         {
             new()
             {
                 Type = TableCapabilityPack.AppendTable,
                 TableId = tableId,
+                StyleName = tableStyleName,
+                ColumnWidths = table.ColumnWidths.ToList(),
+                ColumnWidthUnit = table.ColumnWidthUnit,
                 Rows = table.Rows
                     .Select(row => row.Cells
                         .Select(GetCellText)
@@ -199,19 +221,6 @@ public static class DocumentModelOperationCompiler
                     .ToList()
             }
         };
-
-        var tableStyleName = string.IsNullOrWhiteSpace(table.StyleName)
-            ? defaultTableStyleName
-            : table.StyleName.Trim();
-        if (!string.IsNullOrWhiteSpace(tableStyleName))
-        {
-            operations.Add(new DocumentOperation
-            {
-                Type = TableCapabilityPack.ApplyTableStylePreset,
-                TableId = tableId,
-                StyleName = tableStyleName
-            });
-        }
 
         operations.AddRange(CompileTableCellFormatting(tableId, table, styles, warnings));
 
@@ -269,7 +278,9 @@ public static class DocumentModelOperationCompiler
 
         if (paragraph is not null)
         {
-            var text = string.Concat(paragraph.Runs.Select(run => run.Text ?? string.Empty));
+            var text = paragraph.Runs.Count > 0
+                ? string.Concat(paragraph.Runs.Select(run => run.Text ?? string.Empty))
+                : paragraph.Text ?? string.Empty;
             var includePageNumber = text.Contains("{PAGE}", StringComparison.OrdinalIgnoreCase);
             if (includePageNumber)
             {
@@ -281,7 +292,9 @@ public static class DocumentModelOperationCompiler
                 Type = "set_header_footer",
                 HeaderFooterType = target,
                 Text = text,
-                Runs = paragraph.Runs
+                Runs = (paragraph.Runs.Count > 0
+                        ? paragraph.Runs
+                        : [new DocumentModel.Run { Id = Guid.NewGuid().ToString("N"), Text = paragraph.Text ?? string.Empty }])
                     .Select(run => new DocumentModel.Run
                     {
                         Id = string.IsNullOrWhiteSpace(run.Id) ? Guid.NewGuid().ToString("N") : run.Id,
@@ -350,7 +363,9 @@ public static class DocumentModelOperationCompiler
                 .Where(block => string.Equals(block.Type, "paragraph", StringComparison.OrdinalIgnoreCase))
                 .Select(block => block.Paragraph)
                 .Where(paragraph => paragraph is not null)
-                .Select(paragraph => string.Concat(paragraph!.Runs.Select(run => run.Text ?? string.Empty))));
+                .Select(paragraph => paragraph!.Runs.Count > 0
+                    ? string.Concat(paragraph.Runs.Select(run => run.Text ?? string.Empty))
+                    : paragraph.Text ?? string.Empty));
 
     private static IReadOnlyList<DocumentOperation> CompileTableCellFormatting(
         string? tableId,
@@ -402,7 +417,7 @@ public static class DocumentModelOperationCompiler
         var location = BuildCellLocation(tableId, rowIndex, columnIndex);
         if (cell.ColumnSpan > 1 || cell.RowSpan > 1)
         {
-            warnings.Add($"{location}: columnSpan/rowSpan is not rendered by render_document_model yet.");
+            warnings.Add($"{location}: columnSpan/rowSpan is not rendered by create_document yet.");
         }
 
         var paragraphCount = cell.Blocks.Count(block =>
@@ -417,12 +432,12 @@ public static class DocumentModelOperationCompiler
             var type = string.IsNullOrWhiteSpace(block.Type) ? "unknown" : block.Type.Trim();
             if (!string.Equals(type, "paragraph", StringComparison.OrdinalIgnoreCase))
             {
-                warnings.Add($"{location}: table cell block type '{type}' is not rendered by render_document_model yet; use apply_operations for fields, form fields, images, or rich cell content.");
+                warnings.Add($"{location}: table cell block type '{type}' is not rendered by create_document yet; use apply_operations for fields, form fields, images, or rich cell content.");
             }
 
             if (block.Paragraph?.ParagraphStyle is not null || !string.IsNullOrWhiteSpace(block.Paragraph?.Alignment))
             {
-                warnings.Add($"{location}: paragraph-level formatting inside table cells is not rendered by render_document_model yet; use format_table_cell or follow-up operations.");
+                warnings.Add($"{location}: paragraph-level formatting inside table cells is not rendered by create_document yet; use format_table_cell or follow-up operations.");
             }
         }
     }
@@ -563,6 +578,112 @@ public static class DocumentModelOperationCompiler
             : string.IsNullOrWhiteSpace(options?.DefaultParagraphStyleName)
                 ? null
                 : options.DefaultParagraphStyleName.Trim();
+
+    private static DocumentModel.PageLayoutDefinition? MergePageLayout(
+        DocumentModel.PageLayoutDefinition? requested,
+        DocumentModel.PageLayoutDefinition? defaults)
+    {
+        if (requested is null)
+        {
+            return defaults;
+        }
+
+        if (defaults is null)
+        {
+            return requested;
+        }
+
+        string targetUnit = string.IsNullOrWhiteSpace(requested.Unit)
+            ? defaults.Unit ?? "pt"
+            : requested.Unit;
+        bool hasRequestedNamedSize = !string.IsNullOrWhiteSpace(requested.PageSize);
+        bool hasRequestedCustomSize = requested.PageWidth.HasValue || requested.PageHeight.HasValue;
+
+        return new DocumentModel.PageLayoutDefinition
+        {
+            PageSize = hasRequestedCustomSize
+                ? requested.PageSize
+                : requested.PageSize ?? defaults.PageSize,
+            Orientation = requested.Orientation ?? defaults.Orientation,
+            PageWidth = hasRequestedNamedSize
+                ? requested.PageWidth
+                : requested.PageWidth ?? ConvertLayoutValue(defaults.PageWidth, defaults.Unit, targetUnit),
+            PageHeight = hasRequestedNamedSize
+                ? requested.PageHeight
+                : requested.PageHeight ?? ConvertLayoutValue(defaults.PageHeight, defaults.Unit, targetUnit),
+            Unit = targetUnit,
+            MarginLeft = requested.MarginLeft ?? ConvertLayoutValue(defaults.MarginLeft, defaults.Unit, targetUnit),
+            MarginRight = requested.MarginRight ?? ConvertLayoutValue(defaults.MarginRight, defaults.Unit, targetUnit),
+            MarginTop = requested.MarginTop ?? ConvertLayoutValue(defaults.MarginTop, defaults.Unit, targetUnit),
+            MarginBottom = requested.MarginBottom ?? ConvertLayoutValue(defaults.MarginBottom, defaults.Unit, targetUnit)
+        };
+    }
+
+    private static float? ConvertLayoutValue(float? value, string? sourceUnit, string targetUnit)
+    {
+        if (!value.HasValue)
+        {
+            return null;
+        }
+
+        static float PointsPerUnit(string? unit) => unit?.Trim().ToLowerInvariant() switch
+        {
+            "in" or "inch" or "inches" => 72f,
+            "cm" => 72f / 2.54f,
+            "mm" => 72f / 25.4f,
+            "twip" or "twips" => 1f / 20f,
+            _ => 1f
+        };
+
+        return value.Value * PointsPerUnit(sourceUnit) / PointsPerUnit(targetUnit);
+    }
+
+    private static string? ResolveParagraphStyleName(
+        DocumentModel.Paragraph paragraph,
+        DocumentAutomationOptions? options,
+        string? defaultBodyStyleName)
+    {
+        if (!string.IsNullOrWhiteSpace(paragraph.StyleName))
+        {
+            return paragraph.StyleName.Trim();
+        }
+
+        if (string.IsNullOrWhiteSpace(paragraph.Role))
+        {
+            return defaultBodyStyleName;
+        }
+
+        string role = paragraph.Role.Trim().ToLowerInvariant();
+        string? styleName = role switch
+        {
+            "title" => options?.StyleRoles?.Title,
+            "heading" or "heading1" => options?.StyleRoles?.Heading1,
+            "heading2" or "subheading" => options?.StyleRoles?.Heading2,
+            "body" or "normal" => options?.StyleRoles?.Body,
+            _ => null
+        };
+
+        return string.IsNullOrWhiteSpace(styleName) ? defaultBodyStyleName : styleName.Trim();
+    }
+
+    private static DocumentModel.ParagraphStyleDefinition? MergeParagraphStyle(
+        DocumentModel.ParagraphStyleDefinition? style,
+        string? alignment)
+    {
+        if (style is null && string.IsNullOrWhiteSpace(alignment))
+        {
+            return null;
+        }
+
+        return new DocumentModel.ParagraphStyleDefinition
+        {
+            Alignment = string.IsNullOrWhiteSpace(alignment) ? style?.Alignment : alignment.Trim(),
+            SpaceBefore = style?.SpaceBefore,
+            SpaceAfter = style?.SpaceAfter,
+            LineSpacing = style?.LineSpacing,
+            Unit = string.IsNullOrWhiteSpace(style?.Unit) ? "pt" : style.Unit
+        };
+    }
 
     private static string? ResolveTitleStyleName(DocumentAutomationOptions? options)
         => !string.IsNullOrWhiteSpace(options?.StyleRoles?.Title)

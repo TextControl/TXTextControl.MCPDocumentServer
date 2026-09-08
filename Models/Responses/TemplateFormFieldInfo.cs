@@ -12,5 +12,6 @@ public sealed class TemplateFormFieldInfo
     public bool? Editable { get; set; }
     public bool Enabled { get; set; }
     public IReadOnlyList<string> Items { get; set; } = [];
+    public string Location { get; set; } = "body";
 }
 

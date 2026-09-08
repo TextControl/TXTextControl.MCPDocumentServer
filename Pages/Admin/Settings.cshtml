@@ -1,0 +1,155 @@
+@page "/admin/settings"
+@model TxTextControl.McpServer.Pages.Admin.SettingsModel
+@{
+    Layout = null;
+    string[] logLevels = ["Trace", "Debug", "Information", "Warning", "Error", "Critical", "None"];
+}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Server Settings - TX MCP Admin</title>
+    <link rel="stylesheet" href="/css/mcp-admin.css" />
+</head>
+<body>
+    <div class="ambient ambient-one"></div>
+    <div class="ambient ambient-two"></div>
+    <div class="shell">
+        <aside>
+            <a class="brand" href="/admin" aria-label="TX Text Control MCP administration">
+                <img class="brand-logo" src="/assets/txai.svg" alt="Text Control AI" />
+                <span class="brand-copy"><strong>MCP Document Server</strong><small>Administration</small></span>
+            </a>
+            <nav aria-label="Admin navigation">
+                <a href="/admin">Automation</a>
+                <a class="active" href="/admin/settings">Settings</a>
+                <a href="/admin/styles">Style presets</a>
+                <a href="/admin/mcp">MCP endpoint</a>
+                <a href="/admin/automation">JSON</a>
+                <a href="/admin/logout">Sign out</a>
+            </nav>
+        </aside>
+
+        <main>
+            <form method="post" class="settings-form">
+                <header class="topbar">
+                    <div>
+                        <span class="eyebrow">SERVER CONFIGURATION</span>
+                        <h1>Settings</h1>
+                        <p class="subtle">Configure the MCP endpoint, document runtime, page defaults, access, and diagnostics in one place.</p>
+                    </div>
+                    <button class="primary" type="submit">Save settings</button>
+                </header>
+
+                @if (!string.IsNullOrWhiteSpace(Model.StatusMessage))
+                {
+                    <div class="notice">@Model.StatusMessage</div>
+                }
+                @if (!string.IsNullOrWhiteSpace(Model.ErrorMessage))
+                {
+                    <div class="error">@Model.ErrorMessage</div>
+                }
+
+                <div class="settings-layout">
+                    <nav class="settings-index" aria-label="Settings sections">
+                        <strong>On this page</strong>
+                        <a href="#server">Server</a>
+                        <a href="#workers">Worker pool</a>
+                        <a href="#page-defaults">Page defaults</a>
+                        <a href="#access">Access &amp; logging</a>
+                    </nav>
+
+                    <div class="settings-sections">
+                        <section class="panel settings-panel" id="server">
+                            <div class="panel-header">
+                                <div><span class="section-icon">01</span><h2>Server and sessions</h2><p>Identity, document storage, and session lifetime.</p></div>
+                            </div>
+                            <div class="form-grid">
+                                <div class="field span-2">
+                                    <label asp-for="Settings.ServerName">Server name</label>
+                                    <input asp-for="Settings.ServerName" />
+                                    <small>Advertised to MCP clients during initialization.</small>
+                                </div>
+                                <div class="field span-2">
+                                    <label asp-for="Settings.BasePath">Document base path</label>
+                                    <input asp-for="Settings.BasePath" />
+                                    <small>Relative paths resolve from the application directory. Absolute paths are supported.</small>
+                                </div>
+                                <div class="field">
+                                    <label asp-for="Settings.SessionMaxAgeHours">Session lifetime</label>
+                                    <div class="input-suffix"><input asp-for="Settings.SessionMaxAgeHours" type="number" min="1" /><span>hours</span></div>
+                                </div>
+                            </div>
+                        </section>
+
+                        <section class="panel settings-panel" id="workers">
+                            <div class="panel-header">
+                                <div><span class="section-icon">02</span><h2>Document worker pool</h2><p>Balance concurrency, latency, memory, and process recovery.</p></div>
+                                <label class="toggle-control">
+                                    <input asp-for="Settings.WorkerPoolEnabled" />
+                                    <span></span><b>Enabled</b>
+                                </label>
+                            </div>
+                            <div class="form-group">
+                                <h3>Capacity</h3>
+                                <div class="form-grid form-grid-3">
+                                    <div class="field"><label asp-for="Settings.WorkerCount">Workers</label><input asp-for="Settings.WorkerCount" type="number" min="1" max="16" /></div>
+                                    <div class="field"><label asp-for="Settings.InteractiveWorkerCount">Interactive workers</label><input asp-for="Settings.InteractiveWorkerCount" type="number" min="0" max="15" /></div>
+                                    <div class="field"><label asp-for="Settings.QueueCapacity">Queue capacity</label><input asp-for="Settings.QueueCapacity" type="number" min="1" /></div>
+                                    <div class="field"><label asp-for="Settings.MaximumHotSessions">Hot sessions</label><input asp-for="Settings.MaximumHotSessions" type="number" min="0" /></div>
+                                    <div class="field"><label asp-for="Settings.MaximumInputMegabytes">Maximum input</label><div class="input-suffix"><input asp-for="Settings.MaximumInputMegabytes" type="number" min="1" /><span>MB</span></div></div>
+                                    <div class="field"><label asp-for="Settings.MaximumOutputMegabytes">Maximum output</label><div class="input-suffix"><input asp-for="Settings.MaximumOutputMegabytes" type="number" min="1" /><span>MB</span></div></div>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <h3>Timeouts and recovery</h3>
+                                <div class="form-grid form-grid-3">
+                                    <div class="field"><label asp-for="Settings.StartupTimeoutSeconds">Startup timeout</label><div class="input-suffix"><input asp-for="Settings.StartupTimeoutSeconds" type="number" min="1" /><span>sec</span></div></div>
+                                    <div class="field"><label asp-for="Settings.CommandTimeoutSeconds">Command timeout</label><div class="input-suffix"><input asp-for="Settings.CommandTimeoutSeconds" type="number" min="1" /><span>sec</span></div></div>
+                                    <div class="field"><label asp-for="Settings.SessionAffinityIdleSeconds">Affinity idle time</label><div class="input-suffix"><input asp-for="Settings.SessionAffinityIdleSeconds" type="number" min="1" /><span>sec</span></div></div>
+                                    <div class="field"><label asp-for="Settings.WorkerRestartLimit">Restart limit</label><input asp-for="Settings.WorkerRestartLimit" type="number" min="0" /></div>
+                                    <div class="field"><label asp-for="Settings.WorkerRestartBackoffMilliseconds">Restart backoff</label><div class="input-suffix"><input asp-for="Settings.WorkerRestartBackoffMilliseconds" type="number" min="0" /><span>ms</span></div></div>
+                                    <div class="field span-3"><label asp-for="Settings.WorkerExecutablePath">Worker executable override</label><input asp-for="Settings.WorkerExecutablePath" placeholder="Use the bundled worker" /><small>Leave blank to use the application executable.</small></div>
+                                </div>
+                            </div>
+                        </section>
+
+                        <section class="panel settings-panel" id="page-defaults">
+                            <div class="panel-header"><div><span class="section-icon">03</span><h2>Default page layout</h2><p>Used whenever a document request does not specify page geometry.</p></div></div>
+                            <div class="form-grid form-grid-3">
+                                <div class="field"><label asp-for="Settings.PageSize">Page size</label><select asp-for="Settings.PageSize"><option>Letter</option><option>A4</option><option>Legal</option><option>A3</option><option>A5</option></select></div>
+                                <div class="field"><label asp-for="Settings.Orientation">Orientation</label><select asp-for="Settings.Orientation"><option value="portrait">Portrait</option><option value="landscape">Landscape</option></select></div>
+                                <div class="field"><label asp-for="Settings.PageUnit">Unit</label><select asp-for="Settings.PageUnit"><option value="in">Inches</option><option value="cm">Centimeters</option><option value="mm">Millimeters</option><option value="pt">Points</option></select></div>
+                            </div>
+                            <div class="form-group compact-group">
+                                <h3>Margins</h3>
+                                <div class="form-grid form-grid-4">
+                                    <div class="field"><label asp-for="Settings.MarginTop">Top</label><input asp-for="Settings.MarginTop" type="number" min="0" step="0.05" /></div>
+                                    <div class="field"><label asp-for="Settings.MarginRight">Right</label><input asp-for="Settings.MarginRight" type="number" min="0" step="0.05" /></div>
+                                    <div class="field"><label asp-for="Settings.MarginBottom">Bottom</label><input asp-for="Settings.MarginBottom" type="number" min="0" step="0.05" /></div>
+                                    <div class="field"><label asp-for="Settings.MarginLeft">Left</label><input asp-for="Settings.MarginLeft" type="number" min="0" step="0.05" /></div>
+                                </div>
+                            </div>
+                        </section>
+
+                        <section class="panel settings-panel" id="access">
+                            <div class="panel-header"><div><span class="section-icon">04</span><h2>Access and diagnostics</h2><p>Host filtering, administration credentials, and log verbosity.</p></div></div>
+                            <div class="form-grid">
+                                <div class="field span-2"><label asp-for="Settings.AllowedHosts">Allowed hosts</label><input asp-for="Settings.AllowedHosts" /><small>Separate host names with semicolons. Use <code>*</code> only in controlled environments.</small></div>
+                                <div class="field"><label asp-for="Settings.AdminUsername">Admin username</label><input asp-for="Settings.AdminUsername" autocomplete="username" /></div>
+                                <div class="field"><label asp-for="NewAdminPassword">New admin password</label><input asp-for="NewAdminPassword" type="password" autocomplete="new-password" placeholder="Keep current password" /></div>
+                                <div class="field"><label asp-for="Settings.DefaultLogLevel">Default log level</label><select asp-for="Settings.DefaultLogLevel">@foreach (string level in logLevels) { <option value="@level">@level</option> }</select></div>
+                                <div class="field"><label asp-for="Settings.AspNetLogLevel">ASP.NET log level</label><select asp-for="Settings.AspNetLogLevel">@foreach (string level in logLevels) { <option value="@level">@level</option> }</select></div>
+                            </div>
+                        </section>
+                    </div>
+                </div>
+
+                <div class="footer-actions"><span class="subtle">Settings are written to <code>appsettings.json</code>. Runtime-sensitive changes require a restart.</span><button class="primary" type="submit">Save settings</button></div>
+            </form>
+        </main>
+        <footer class="admin-footer"><span><strong>Text Control</strong> · Document processing for intelligent applications</span><span>© @DateTime.UtcNow.Year Text Control</span></footer>
+    </div>
+</body>
+</html>

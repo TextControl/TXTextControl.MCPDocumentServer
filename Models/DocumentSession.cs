@@ -11,4 +11,9 @@ public sealed class DocumentSession
     public string? LoadedTemplateName { get; set; }
     public DateTime CreatedUtc { get; init; }
     public DateTime LastAccessUtc { get; set; }
+
+    internal object SyncRoot { get; } = new();
+    internal DocumentState? CachedState { get; set; }
+    internal DocumentContentSnapshot? CachedContent { get; set; }
+    internal TemplateContentSnapshot? CachedTemplate { get; set; }
 }

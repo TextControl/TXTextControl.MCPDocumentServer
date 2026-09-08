@@ -6,7 +6,7 @@ namespace TxTextControl.McpServer.Models.Requests;
 
 public sealed class DocumentOperation
 {
-    [JsonPropertyName("type")]
+    [JsonPropertyName("type"), JsonRequired]
     public string Type { get; set; } = string.Empty;
 
     [JsonPropertyName("style")]
@@ -17,6 +17,27 @@ public sealed class DocumentOperation
 
     [JsonPropertyName("styleName")]
     public string? StyleName { get; set; }
+
+    [JsonPropertyName("newStyleName")]
+    public string? NewStyleName { get; set; }
+
+    [JsonPropertyName("replacementStyleName")]
+    public string? ReplacementStyleName { get; set; }
+
+    [JsonPropertyName("basedOn")]
+    public string? BasedOn { get; set; }
+
+    [JsonPropertyName("followingStyle")]
+    public string? FollowingStyle { get; set; }
+
+    [JsonPropertyName("styleNamePrefix")]
+    public string? StyleNamePrefix { get; set; }
+
+    [JsonPropertyName("minimumOccurrences")]
+    public int? MinimumOccurrences { get; set; }
+
+    [JsonPropertyName("includeStyledParagraphs")]
+    public bool IncludeStyledParagraphs { get; set; }
 
     [JsonPropertyName("tableStyleName")]
     public string? TableStyleName { get; set; }
@@ -138,6 +159,33 @@ public sealed class DocumentOperation
     [JsonPropertyName("paragraphIndex")]
     public int? ParagraphIndex { get; set; }
 
+    [JsonPropertyName("startParagraphIndex")]
+    public int? StartParagraphIndex { get; set; }
+
+    [JsonPropertyName("endParagraphIndex")]
+    public int? EndParagraphIndex { get; set; }
+
+    [JsonPropertyName("start")]
+    public int? Start { get; set; }
+
+    [JsonPropertyName("length")]
+    public int? Length { get; set; }
+
+    [JsonPropertyName("expectedText")]
+    public string? ExpectedText { get; set; }
+
+    [JsonPropertyName("occurrenceIndex")]
+    public int? OccurrenceIndex { get; set; }
+
+    [JsonPropertyName("nearTextPosition")]
+    public int? NearTextPosition { get; set; }
+
+    [JsonPropertyName("replaceAll")]
+    public bool ReplaceAll { get; set; }
+
+    [JsonPropertyName("allParagraphs")]
+    public bool AllParagraphs { get; set; }
+
     [JsonPropertyName("rowIndex")]
     public int? RowIndex { get; set; }
 
@@ -147,8 +195,23 @@ public sealed class DocumentOperation
     [JsonPropertyName("tableId")]
     public string? TableId { get; set; }
 
+    [JsonPropertyName("tableNumber")]
+    public int? TableNumber { get; set; }
+
+    [JsonPropertyName("tableScope")]
+    public string? TableScope { get; set; }
+
+    [JsonPropertyName("selectionLength")]
+    public int? SelectionLength { get; set; }
+
     [JsonPropertyName("rows")]
     public List<List<string>> Rows { get; set; } = [];
+
+    [JsonPropertyName("columnWidths")]
+    public List<float?> ColumnWidths { get; set; } = [];
+
+    [JsonPropertyName("columnWidthUnit")]
+    public string? ColumnWidthUnit { get; set; }
 
     [JsonPropertyName("imagePath")]
     public string? ImagePath { get; set; }

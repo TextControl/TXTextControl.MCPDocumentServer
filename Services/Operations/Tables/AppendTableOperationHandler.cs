@@ -39,12 +39,14 @@ public sealed class AppendTableOperationHandler : IDocumentOperationHandler
         Description = "Appends or inserts a simple rectangular table from row and cell text.",
         Intent = "Use for structured tabular content where the AI can provide rows directly.",
         RequiredProperties = ["type", "rows"],
-        OptionalProperties = ["tableId", "styleName", "paragraphIndex", "placement"],
+        OptionalProperties = ["tableId", "styleName", "columnWidths", "columnWidthUnit", "paragraphIndex", "placement"],
         Properties = new()
         {
             ["rows"] = "Array of rows, where each row is an array of cell text. Missing cells in shorter rows are padded as empty text.",
             ["tableId"] = "Optional TX table id as an integer string between 10 and 32767.",
             ["styleName"] = "Optional table preset/style name. Omit when the prompt contains no explicit table style instruction; the configured default table preset is applied automatically.",
+            ["columnWidths"] = "Optional width for each column. The count must match the table column count.",
+            ["columnWidthUnit"] = "Unit for columnWidths: pt, px, in, cm, mm, or twips. Defaults to pt.",
             ["paragraphIndex"] = "Optional zero-based body paragraph index used with placement 'before' or 'after'.",
             ["placement"] = "Optional placement: end, before, or after. Defaults to end."
         },
@@ -72,6 +74,8 @@ public sealed class AppendTableOperationHandler : IDocumentOperationHandler
         var txTableId = ResolveTableId(context.Document, operation.TableId);
         var target = ResolveInsertionTarget(context.Document, operation);
         var tablePreset = ResolveTablePreset(operation.StyleName);
+        var columnWidths = ResolveRequestedColumnWidths(context, operation, columnCount)
+            ?? ResolveAutoFitColumnWidths(context, rows, columnCount);
 
         if (context.TryGetTextControl(out var tx))
         {
@@ -83,8 +87,6 @@ public sealed class AppendTableOperationHandler : IDocumentOperationHandler
 
             var table = tx.Tables.GetItem(txTableId)
                 ?? throw new InvalidOperationException("TX Text Control inserted the table, but it could not be found by id.");
-            var columnWidths = ResolveAutoFitColumnWidths(context, rows, columnCount);
-
             for (var rowIndex = 0; rowIndex < rowCount; rowIndex++)
             {
                 for (var columnIndex = 0; columnIndex < columnCount; columnIndex++)
@@ -120,10 +122,9 @@ public sealed class AppendTableOperationHandler : IDocumentOperationHandler
             ApplyPresetToModelTable(neutralTable, tablePreset);
         }
 
-        var modelColumnWidths = ResolveAutoFitColumnWidths(context, rows, columnCount);
-        if (modelColumnWidths is not null)
+        if (columnWidths is not null)
         {
-            neutralTable.ColumnWidths = modelColumnWidths.Select(width => (float?)Math.Round(width / 20f, 2)).ToList();
+            neutralTable.ColumnWidths = columnWidths.Select(width => (float?)Math.Round(width / 20f, 2)).ToList();
             neutralTable.ColumnWidthUnit = "pt";
         }
 
@@ -208,7 +209,7 @@ public sealed class AppendTableOperationHandler : IDocumentOperationHandler
 
                 if (cellStyle is not null)
                 {
-                    DocumentOperationFormatter.ApplyCellStyle(cell, cellStyle);
+                    DocumentOperationFormatter.ApplyCellStyle(tx, cell, cellStyle);
                 }
             }
         }
@@ -415,6 +416,69 @@ public sealed class AppendTableOperationHandler : IDocumentOperationHandler
         }
 
         return widths;
+    }
+
+    private static int[]? ResolveRequestedColumnWidths(
+        DocumentOperationContext context,
+        DocumentOperation operation,
+        int columnCount)
+    {
+        if (operation.ColumnWidths.Count == 0)
+        {
+            return null;
+        }
+
+        if (operation.ColumnWidths.Count != columnCount || operation.ColumnWidths.Any(width => !width.HasValue))
+        {
+            throw new ArgumentException("columnWidths must contain one positive width for every table column.");
+        }
+
+        string unit = string.IsNullOrWhiteSpace(operation.ColumnWidthUnit)
+            ? "pt"
+            : operation.ColumnWidthUnit.Trim();
+        int[] widths = operation.ColumnWidths
+            .Select(width => ToColumnTwips(width!.Value, unit))
+            .ToArray();
+
+        var layout = context.GetCurrentSection().PageLayout;
+        if (layout?.PageWidth is not null)
+        {
+            int availableWidth = ToTwips(layout.PageWidth.Value, layout.Unit)
+                - ToTwips(layout.MarginLeft ?? 72f, layout.Unit)
+                - ToTwips(layout.MarginRight ?? 72f, layout.Unit);
+            int requestedWidth = widths.Sum();
+            if (availableWidth > 0 && requestedWidth > availableWidth)
+            {
+                float scale = availableWidth / (float)requestedWidth;
+                for (int index = 0; index < widths.Length; index++)
+                {
+                    widths[index] = Math.Max(360, (int)Math.Floor(widths[index] * scale));
+                }
+
+                widths[^1] += availableWidth - widths.Sum();
+            }
+        }
+
+        return widths;
+    }
+
+    private static int ToColumnTwips(float value, string unit)
+    {
+        if (value <= 0)
+        {
+            throw new ArgumentException("Column widths must be greater than 0.");
+        }
+
+        return unit.Trim().ToLowerInvariant() switch
+        {
+            "twip" or "twips" => (int)Math.Round(value),
+            "pt" or "point" or "points" => (int)Math.Round(value * 20f),
+            "px" or "pixel" or "pixels" => (int)Math.Round(value * 15f),
+            "in" or "inch" or "inches" => (int)Math.Round(value * 1440f),
+            "cm" or "centimeter" or "centimeters" => (int)Math.Round(value * 1440f / 2.54f),
+            "mm" or "millimeter" or "millimeters" => (int)Math.Round(value * 1440f / 25.4f),
+            _ => throw new ArgumentException("columnWidthUnit must be pt, px, in, cm, mm, or twips.")
+        };
     }
 
     private static void ApplyColumnWidths(Table table, IReadOnlyList<int> columnWidths)

@@ -47,19 +47,32 @@ public sealed class UpdateFormFieldOperationHandler : IDocumentOperationHandler
 
         if (context.TryGetTextControl(out var tx))
         {
-            foreach (FormField field in tx.FormFields)
+            foreach (FieldContainer container in FieldInsertionUtilities.EnumerateFieldContainers(tx))
             {
-                if (!string.Equals(field.Name, fieldName, StringComparison.OrdinalIgnoreCase))
+                foreach (FormField field in container.Content.FormFields)
                 {
-                    continue;
-                }
+                    if (!string.Equals(field.Name, fieldName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
 
-                FormFieldOperationUtilities.ApplyValue(field, operation);
-                updated++;
+                    FormFieldOperationUtilities.ApplyValue(field, operation);
+                    updated++;
+                }
             }
         }
 
-        var updatedModel = UpdateModelFields(context.Document.Sections.SelectMany(section => section.Blocks), fieldName, operation);
+        var updatedModel = 0;
+        foreach (DocumentModel.Section section in context.Document.Sections)
+        {
+            updatedModel += UpdateModelFields(section.Blocks, fieldName, operation);
+            if (section.Header is not null) updatedModel += UpdateModelFields(section.Header.Blocks, fieldName, operation);
+            if (section.Footer is not null) updatedModel += UpdateModelFields(section.Footer.Blocks, fieldName, operation);
+        }
+        if (updated == 0 && updatedModel == 0)
+        {
+            throw new ArgumentException($"No form field named '{fieldName}' was found. Inspect template form fields and retry with an existing field name.");
+        }
 
         return new OperationResult
         {

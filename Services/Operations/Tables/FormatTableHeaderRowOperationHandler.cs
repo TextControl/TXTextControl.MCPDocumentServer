@@ -57,16 +57,19 @@ public sealed class FormatTableHeaderRowOperationHandler : IDocumentOperationHan
             throw new ArgumentException("rowIndex must be >= 0.");
         }
 
-        var modelTable = TableOperationUtilities.GetModelTable(context.Document, tableId.ToString());
-        if (rowIndex >= modelTable.Rows.Count)
-        {
-            throw new ArgumentException("rowIndex is out of range.");
-        }
+        var modelTable = TableOperationUtilities.TryGetModelTable(context.Document, tableId.ToString());
+        int columnCount;
 
         if (context.TryGetTextControl(out var tx))
         {
             var table = TableOperationUtilities.GetTxTable(tx, tableId);
-            for (var columnIndex = 0; columnIndex < modelTable.Rows[rowIndex].Cells.Count; columnIndex++)
+            if (rowIndex >= table.Rows.Count)
+            {
+                throw new ArgumentException("rowIndex is out of range.");
+            }
+
+            columnCount = table.Columns.Count;
+            for (var columnIndex = 0; columnIndex < columnCount; columnIndex++)
             {
                 var cell = TableOperationUtilities.GetTxCell(table, rowIndex, columnIndex);
                 if (operation.Style is not null)
@@ -79,12 +82,29 @@ public sealed class FormatTableHeaderRowOperationHandler : IDocumentOperationHan
 
                 if (operation.CellStyle is not null)
                 {
-                    DocumentOperationFormatter.ApplyCellStyle(cell, operation.CellStyle);
+                    DocumentOperationFormatter.ApplyCellStyle(tx, cell, operation.CellStyle);
                 }
             }
         }
+        else
+        {
+            if (modelTable is null)
+            {
+                throw new InvalidOperationException($"Table '{tableId}' was not found in the document model.");
+            }
 
-        foreach (var cell in modelTable.Rows[rowIndex].Cells)
+            if (rowIndex >= modelTable.Rows.Count)
+            {
+                throw new ArgumentException("rowIndex is out of range.");
+            }
+
+            columnCount = modelTable.Rows[rowIndex].Cells.Count;
+        }
+
+        var modelRow = modelTable is not null && rowIndex < modelTable.Rows.Count
+            ? modelTable.Rows[rowIndex]
+            : null;
+        foreach (var cell in modelRow?.Cells ?? [])
         {
             if (operation.Style is not null)
             {
@@ -103,14 +123,15 @@ public sealed class FormatTableHeaderRowOperationHandler : IDocumentOperationHan
             Type = Type,
             Detail = $"Formatted table '{tableId}' header row {rowIndex}.",
             TargetType = "tableRow",
-            TargetId = modelTable.Rows[rowIndex].Id,
+            TargetId = modelRow?.Id,
             Location = $"tables['{tableId}'].rows[{rowIndex}]",
             Metadata = new Dictionary<string, object?>
             {
                 ["tableId"] = tableId.ToString(),
                 ["rowIndex"] = rowIndex,
-                ["rowId"] = modelTable.Rows[rowIndex].Id,
-                ["cellIds"] = modelTable.Rows[rowIndex].Cells.Select(cell => cell.Id).ToList(),
+                ["rowId"] = modelRow?.Id,
+                ["cellCount"] = columnCount,
+                ["cellIds"] = modelRow?.Cells.Select(cell => cell.Id).ToList() ?? [],
                 ["hasTextStyle"] = operation.Style is not null,
                 ["hasCellStyle"] = operation.CellStyle is not null
             }

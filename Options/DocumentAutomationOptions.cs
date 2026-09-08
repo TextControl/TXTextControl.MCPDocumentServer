@@ -16,5 +16,7 @@ public sealed class DocumentAutomationOptions
 
     public StyleRoleDefinition StyleRoles { get; set; } = new();
 
+    public PageLayoutDefinition? DefaultPageLayout { get; set; }
+
     public List<TableStylePresetDefinition> TableStylePresets { get; set; } = [];
 }

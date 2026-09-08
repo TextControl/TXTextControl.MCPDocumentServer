@@ -1,14 +1,25 @@
 using System;
 using System.IO;
+using System.Text.Json;
+using ModelContextProtocol.Protocol;
 using TxTextControl.McpServer.Models.Responses;
+using TxTextControl.McpServer.Services.Workers;
 
 namespace TxTextControl.McpServer.Tools;
 
 internal static class ToolErrorMapper
 {
-    public static ToolErrorResponse Map(Exception ex)
-        => ex switch
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+
+    public static CallToolResult Map(Exception ex)
+    {
+        ToolErrorResponse error = ex switch
         {
+            DocumentWorkerCommandException workerError => new ToolErrorResponse
+            {
+                Code = workerError.Code,
+                Message = workerError.Message
+            },
             System.ComponentModel.LicenseException => new ToolErrorResponse
             {
                 Code = "license_error",
@@ -35,4 +46,19 @@ internal static class ToolErrorMapper
                 Message = ex.Message
             }
         };
+
+        JsonElement structured = JsonSerializer.SerializeToElement(error, JsonOptions);
+        return new CallToolResult
+        {
+            IsError = true,
+            StructuredContent = structured,
+            Content =
+            [
+                new TextContentBlock
+                {
+                    Text = structured.GetRawText()
+                }
+            ]
+        };
+    }
 }

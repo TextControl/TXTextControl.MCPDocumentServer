@@ -1,8 +1,10 @@
 using System;
 using System.ComponentModel;
+using System.Text.Json;
 using Microsoft.Extensions.Options;
 using ModelContextProtocol.Server;
 using TxTextControl.McpServer.Models.Requests;
+using TxTextControl.McpServer.Models.Responses;
 using TxTextControl.McpServer.Options;
 using TxTextControl.McpServer.Services;
 using TxTextControl.McpServer.Services.Admin;
@@ -33,7 +35,7 @@ public sealed class OperationTools
         _authoringGuide = authoringGuide;
     }
 
-    [McpServerTool, Description("Applies an ordered list of semantic document operations to a session. Session continuity rule: for follow-up prompts that ask to change, modify, update, edit, adjust, make, increase, decrease, replace, or refer to the current/same/that document, reuse the existing sessionId and inspect the current document first; do not create a new document unless the user explicitly asks for one. If request.sessionId is omitted and request.createIfMissing is true, a new document session is created. Call get_authoring_guide first for operation-specific schemas, examples, valid enum values, style presets, table presets, recipes, and stylePolicy. Style policy: if the user prompt does not explicitly request styling, omit styleName, style, paragraph, cellStyle, and tableStyleName; server defaults apply. Use this for incremental edits, table formatting, fields, merge blocks, form fields, sections, headers/footers, images, search/replace, and layout changes.")]
+    [McpServerTool, Description("Advanced mutation tool for structural or formatting changes to an existing session after inspect_document. Prefer edit_document for ordinary text replacement and insert_table for adding a simple table. Every operations item requires its type discriminator. Reuse sessionId. Do not use createIfMissing to assemble a complete draft; use create_document or a recipe. Omit styling properties not explicitly requested so server presets remain in effect.")]
     public object ApplyOperations(ApplyOperationsRequest request)
     {
         try
@@ -46,7 +48,49 @@ public sealed class OperationTools
         }
     }
 
-    [McpServerTool, Description("Renders a neutral AI-facing Document model into a real TX Text Control session document. Use this for new drafts, not for follow-up edits to an existing document unless a sessionId is supplied intentionally. Session continuity rule: when the user asks to change, modify, update, edit, adjust, make, increase, decrease, replace, or refers to the current/same/that document, reuse the existing sessionId and prefer apply_operations after inspection; do not create a new document unless explicitly requested. Style policy: if the user prompt does not explicitly request styling, omit styleName, style, paragraphStyle, cellStyle, tableStyleName, fonts, colors, sizes, borders, spacing, and alignment. Configured defaults are applied automatically: document.title uses the title style role, unstyled paragraphs and headers/footers use the body style role, and unstyled tables receive the first configured table style preset. Simple whole-cell table cellStyle and uniform cell run styles are rendered; richer table-cell content may return warnings. Always inspect warnings. Use apply_operations for precise table header/cell formatting, fields in cells, form fields, merge blocks, or targeted edits. Call get_authoring_guide first for the document model contract and full examples.")]
+    [McpServerTool(
+        Name = "create_document_from_markdown",
+        ReadOnly = false,
+        Destructive = false,
+        Idempotent = false,
+        OpenWorld = false,
+        UseStructuredContent = true,
+        OutputSchemaType = typeof(CreateDocumentFromMarkdownResponse)),
+     Description("Primary creation tool for ordinary documents whose complete fixed content can be expressed as Markdown: reports, letters, proposals, agendas, articles, and invoices with concrete line items. Required: request.markdown containing the complete document, with one H1 title, H2/H3 hierarchy, lists, emphasis, and valid Markdown tables as appropriate. Pass raw Markdown text, not Base64 and not an outer code fence. The server creates a new session and atomically imports the Markdown, maps its hierarchy to configured Title/Heading1/Heading2/Body styles, applies the default page layout and table preset, and returns sessionId. If an output format was requested, call create_document_export next with that sessionId. Do not use this for reusable templates, merge fields, repeating blocks, form fields, headers/footers, images, or explicit fonts/colors/sizes; use a matching recipe or create_document for those advanced semantics.")]
+    public object CreateDocumentFromMarkdown(CreateDocumentFromMarkdownRequest request)
+    {
+        try
+        {
+            return _workflow.CreateDocumentFromMarkdown(request);
+        }
+        catch (Exception ex)
+        {
+            return ToolErrorMapper.Map(ex);
+        }
+    }
+
+    [McpServerTool(
+        Name = "apply_document_preset_styles",
+        ReadOnly = false,
+        Destructive = false,
+        Idempotent = true,
+        OpenWorld = false,
+        UseStructuredContent = true,
+        OutputSchemaType = typeof(ApplyDocumentPresetStylesResponse)),
+     Description("Applies the MCP server's configured default page layout, paragraph style presets, and table preset to an already loaded document. Use this after load_document when the user asks to apply, normalize, polish, or restyle the document with preset/default styles. It preserves all document text and the existing sessionId, maps imported Markdown H1/H2/H3 hierarchy to Title/Heading1/Heading2 and other paragraphs to Body, styles native tables, and requires only request.sessionId. Do not recreate the document and do not ask the model to emit per-paragraph or per-cell formatting operations.")]
+    public object ApplyDocumentPresetStyles(ApplyDocumentPresetStylesRequest request)
+    {
+        try
+        {
+            return _workflow.ApplyDocumentPresetStyles(request);
+        }
+        catch (Exception ex)
+        {
+            return ToolErrorMapper.Map(ex);
+        }
+    }
+
+    [McpServerTool(Name = "create_document", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false, UseStructuredContent = true, OutputSchemaType = typeof(ApplyOperationsResponse)), Description("Advanced complete-document creation tool using the semantic Document model. Prefer create_document_from_markdown for ordinary fixed-content documents. Use this tool when the user requests explicit fonts, colors, sizes, advanced layout, headers/footers, images, fields, or structures Markdown cannot represent. Omit every style and page property the user did not specify: the server applies its configured defaults to those elements. Use document.title, semantic paragraph roles, and real table rows/cells. Never assemble a full draft through create_empty_document plus apply_operations.")]
     public object RenderDocumentModel(RenderDocumentModelRequest request)
     {
         try
@@ -59,34 +103,30 @@ public sealed class OperationTools
         }
     }
 
-    [McpServerTool, Description("Returns the configured document automation capabilities, enabled operation types, enabled capability packs, configured style and table presets, operation schemas, and the complete external-AI authoring guide. Use this before planning operation payloads.")]
+    [McpServerTool, Description("Returns a compact overview of enabled automation capabilities, operation names, configured style names, and output formats. Use get_authoring_guide only when complete schemas, examples, and troubleshooting guidance are required.")]
     public object GetDocumentAutomationCapabilities()
     {
         try
         {
-            var guide = _authoringGuide.Build();
             return new
             {
                 capabilityPacks = _registry.GetCapabilityPacks(),
                 enabledCapabilityPacks = _settings.GetEnabledCapabilityPacks(),
                 enabledOperations = _settings.GetEnabledOperations(),
                 operations = _registry.GetCapabilities(),
-                operationSchemas = guide.OperationSchemas,
-                documentModelContract = guide.DocumentModelContract,
                 defaultParagraphStyleName = _options.DefaultParagraphStyleName,
                 styleRoles = _options.StyleRoles,
+                defaultPageLayout = _options.DefaultPageLayout,
                 stylePresetNames = _options.StylePresets.ConvertAll(style => style.Name),
                 tableStylePresetNames = _options.TableStylePresets.ConvertAll(style => style.Name),
-                stylePresets = _options.StylePresets,
-                tableStylePresets = _options.TableStylePresets,
-                stylePolicy = guide.StylePolicy,
-                sessionPolicy = guide.SessionPolicy,
-                valueSets = guide.ValueSets,
-                recipes = guide.Recipes,
-                recommendedWorkflow = guide.RecommendedWorkflow,
-                bestPractices = guide.BestPractices,
-                troubleshooting = guide.Troubleshooting,
-                authoringGuide = guide
+                outputFormats = new[] { "tx", "rtf", "docx", "pdf", "html", "md", "txt" },
+                discovery = new
+                {
+                    ordinaryDocumentCreation = "create_document_from_markdown",
+                    reusableTemplates = "list_document_recipes",
+                    customAuthoring = "get_authoring_guide",
+                    importedDocumentStyling = "apply_document_preset_styles"
+                }
             };
         }
         catch (Exception ex)
@@ -95,12 +135,88 @@ public sealed class OperationTools
         }
     }
 
-    [McpServerTool, Description("Returns a complete self-contained authoring guide for external AI clients. Includes recommended workflows, operation-specific schemas and examples, style/table preset definitions, valid enum values, document model contract, recipes for common document types, best practices, and troubleshooting. Call this first when the AI only has MCP access.")]
+    [McpServerTool, Description("Returns a complete self-contained authoring guide for advanced document construction. Includes workflows, schemas, examples, presets, valid values, and troubleshooting. This is a heavyweight response; ordinary fixed-content documents should use create_document_from_markdown directly.")]
     public object GetAuthoringGuide()
     {
         try
         {
             return _authoringGuide.Build();
+        }
+        catch (Exception ex)
+        {
+            return ToolErrorMapper.Map(ex);
+        }
+    }
+
+    [McpServerTool, Description("Lists compact server-owned templates and advanced document recipes by name and goal. Use this when the user requests reusable merge fields, repeating blocks, form fields, or another template workflow. For an ordinary document with concrete fixed content, use create_document_from_markdown instead.")]
+    public object ListDocumentRecipes()
+    {
+        try
+        {
+            return new
+            {
+                recipes = _authoringGuide.GetRecipes().Select(recipe => new DocumentRecipeSummary
+                {
+                    Name = recipe.Name,
+                    Goal = recipe.Goal
+                })
+            };
+        }
+        catch (Exception ex)
+        {
+            return ToolErrorMapper.Map(ex);
+        }
+    }
+
+    [McpServerTool, Description("Creates a new reusable template or advanced document by executing a server-owned recipe returned by list_document_recipes. Prefer this for merge fields, repeating blocks, form fields, and established template semantics. For ordinary fixed content, use create_document_from_markdown. If mergeFields or repeatingBlocks are returned, populate them with merge_template before export.")]
+    public object CreateDocumentFromRecipe(CreateDocumentFromRecipeRequest request)
+    {
+        try
+        {
+            ArgumentNullException.ThrowIfNull(request);
+            AuthoringRecipe recipe = _authoringGuide.GetRecipe(request.RecipeName);
+            if (!recipe.ExampleRequest.TryGetValue("request", out object? recipeRequest)
+                || recipeRequest is null)
+            {
+                throw new InvalidOperationException($"Document recipe '{recipe.Name}' has no executable request.");
+            }
+
+            JsonElement payload = JsonSerializer.SerializeToElement(recipeRequest);
+            ApplyOperationsResponse response;
+            ApplyOperationsRequest? operationsRequest = null;
+            if (recipe.PreferredTool.Equals("create_document", StringComparison.OrdinalIgnoreCase))
+            {
+                RenderDocumentModelRequest modelRequest = payload.Deserialize<RenderDocumentModelRequest>()
+                    ?? throw new InvalidOperationException($"Document recipe '{recipe.Name}' has an invalid model request.");
+                modelRequest.SessionId = null;
+                modelRequest.CreateIfMissing = true;
+                response = _workflow.RenderDocumentModel(modelRequest);
+            }
+            else if (recipe.PreferredTool.Equals("apply_operations", StringComparison.OrdinalIgnoreCase))
+            {
+                operationsRequest = payload.Deserialize<ApplyOperationsRequest>()
+                    ?? throw new InvalidOperationException($"Document recipe '{recipe.Name}' has an invalid operation request.");
+                operationsRequest.SessionId = null;
+                operationsRequest.CreateIfMissing = true;
+                response = _workflow.ApplyOperations(operationsRequest);
+            }
+            else
+            {
+                throw new InvalidOperationException(
+                    $"Document recipe '{recipe.Name}' uses unsupported tool '{recipe.PreferredTool}'.");
+            }
+
+            IReadOnlyList<DocumentOperation> operations = operationsRequest?.Operations ?? [];
+            return new DocumentRecipeResponse
+            {
+                SessionId = response.SessionId,
+                RecipeName = recipe.Name,
+                OperationCount = response.Results.Count,
+                MergeFields = ReadNames(operations, "append_merge_field", operation => operation.FieldName),
+                RepeatingBlocks = ReadNames(operations, "append_merge_block", operation => operation.BlockName),
+                FormFields = ReadNames(operations, "append_form_field", operation => operation.FieldName),
+                Warnings = response.Warnings
+            };
         }
         catch (Exception ex)
         {
@@ -121,7 +237,19 @@ public sealed class OperationTools
         }
     }
 
-    [McpServerTool, Description("Returns a compact structure summary for a session document: sections, block types, paragraph previews, table ids/dimensions, image alt text, field names, and header/footer presence. Use this before planning targeted edits.")]
+    private static string[] ReadNames(
+        IEnumerable<DocumentOperation> operations,
+        string operationType,
+        Func<DocumentOperation, string?> selector) =>
+        operations
+            .Where(operation => operation.Type.Equals(operationType, StringComparison.OrdinalIgnoreCase))
+            .Select(selector)
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Select(name => name!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+    [McpServerTool, Description("Returns a compact structure summary for a session document: sections, block types, paragraph previews, authoritative live table count/dimensions, image alt text, field names, and header/footer presence. Use get_document_tables for ordered table details and ordinal table edits.")]
     public object GetDocumentStructure(string sessionId)
     {
         try
@@ -134,7 +262,7 @@ public sealed class OperationTools
         }
     }
 
-    [McpServerTool, Description("Returns styles known to the document automation model for a session, including text and paragraph style definitions captured by supported operations.")]
+    [McpServerTool, Description("Returns authoritative native TX paragraph styles for a session, including exact name, base/following style, character and paragraph definitions, built-in status, and live paragraph usage count. Prefer list_document_styles for the focused style workflow.")]
     public object GetDocumentStyles(string sessionId)
     {
         try
@@ -147,7 +275,7 @@ public sealed class OperationTools
         }
     }
 
-    [McpServerTool, Description("Returns table summaries for a session document, including table ids, row and column counts, cell text previews, cell styles, spans, and merge field names inside cells.")]
+    [McpServerTool, Description("Authoritative live-table inspection. Returns tableCount and all tables in document order with zero-based tableIndex, one-based tableNumber, actual TX table id, row/column counts, and cell text previews. Use this to answer how many tables exist and before requests such as 'the second table'. For row additions, pass the returned id or tableNumber to add_table_rows; do not infer tables from the neutral document model.")]
     public object GetDocumentTables(string sessionId)
     {
         try
@@ -186,7 +314,7 @@ public sealed class OperationTools
         }
     }
 
-    [McpServerTool, Description("Returns actual TX Text Control MERGEFIELD ApplicationFields from the current session document. Use this to inspect a template before MailMerge.")]
+    [McpServerTool, Description("Returns actual TX Text Control MERGEFIELD ApplicationFields from the current session document, including whether each field is in the body, header, or footer. Use this to verify insertion and inspect a template before MailMerge.")]
     public object GetTemplateMergeFields(string sessionId)
     {
         try
@@ -212,7 +340,7 @@ public sealed class OperationTools
         }
     }
 
-    [McpServerTool, Description("Returns actual TX Text Control form fields from the current session document, including text, selection/dropdown, checkbox, and date fields.")]
+    [McpServerTool, Description("Returns actual TX Text Control form fields from the current session document, including text, selection/dropdown, checkbox, date, and whether each field is in the body, header, or footer. Use this to verify insertion.")]
     public object GetTemplateFormFields(string sessionId)
     {
         try
@@ -225,7 +353,7 @@ public sealed class OperationTools
         }
     }
 
-    [McpServerTool, Description("Merges JSON data into the current session template using TX Text Control MailMerge.MergeJsonData. Build templates with append_merge_field, append_merge_block, and append_form_field first. Set formFieldMergeType to preselect to keep form fields editable or replace to flatten them.")]
+    [McpServerTool, Description("Merges JSON data into the current session template using TX Text Control MailMerge.MergeJsonData. Build templates with insert_merge_field, create_merge_block, and insert_form_field (or their batched append_* operations), then verify the real fields before merging. Set formFieldMergeType to preselect to keep form fields editable or replace to flatten them.")]
     public object MergeTemplate(MergeTemplateRequest request)
     {
         try

@@ -59,6 +59,12 @@ public sealed class FormatTextOccurrencesOperationHandler : IDocumentOperationHa
             operation.WholeWord,
             operation.MaxOccurrences);
 
+        if (occurrences.Count == 0)
+        {
+            throw new ArgumentException(
+                $"No text matched '{operation.MatchText}'. Inspect the current document and retry with exact text.");
+        }
+
         foreach (var occurrence in occurrences)
         {
             tx.Selection = new Selection(occurrence.Start, occurrence.Length);

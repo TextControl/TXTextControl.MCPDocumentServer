@@ -37,6 +37,10 @@ public sealed class InsertSectionBreakOperationHandler : IDocumentOperationHandl
         var breakKind = ResolveBreakKind(operation.BreakKind);
         if (context.TryGetTextControl(out var tx))
         {
+            // Previous operations can leave a non-empty formatting selection active.
+            // Sections.Add inserts at that selection, which can truncate the selected
+            // paragraph. Always collapse the selection at the physical document end.
+            tx.Selection = new Selection((tx.Text ?? string.Empty).Length, 0);
             tx.Sections.Add(breakKind);
         }
 

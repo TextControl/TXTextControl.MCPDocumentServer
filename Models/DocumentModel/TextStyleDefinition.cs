@@ -25,8 +25,26 @@ public sealed class TextStyleDefinition
     [JsonPropertyName("underline")]
     public bool? Underline { get; set; }
 
+    [JsonPropertyName("strikeout")]
+    public bool? Strikeout { get; set; }
+
     [JsonPropertyName("colorHex")]
     public string? ColorHex { get; set; }
+
+    [JsonPropertyName("backgroundColorHex")]
+    public string? BackgroundColorHex { get; set; }
+
+    [JsonPropertyName("characterSpacing")]
+    public float? CharacterSpacing { get; set; }
+
+    [JsonPropertyName("characterScaling")]
+    public int? CharacterScaling { get; set; }
+
+    [JsonPropertyName("baseline")]
+    public float? Baseline { get; set; }
+
+    [JsonPropertyName("capitals")]
+    public string? Capitals { get; set; }
 
     [JsonPropertyName("paragraph")]
     public ParagraphStyleDefinition? Paragraph { get; set; }

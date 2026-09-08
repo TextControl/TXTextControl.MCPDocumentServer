@@ -123,6 +123,7 @@ public sealed class StylesModel : PageModel
         public string? ColorHex { get; set; }
         public float? SpaceBefore { get; set; }
         public float? SpaceAfter { get; set; }
+        public float? LineSpacing { get; set; }
         public string ParagraphUnit { get; set; } = "pt";
         public string? Alignment { get; set; }
         public bool Delete { get; set; }
@@ -140,6 +141,7 @@ public sealed class StylesModel : PageModel
                 ColorHex = definition.ColorHex,
                 SpaceBefore = definition.Paragraph?.SpaceBefore,
                 SpaceAfter = definition.Paragraph?.SpaceAfter,
+                LineSpacing = definition.Paragraph?.LineSpacing,
                 ParagraphUnit = definition.Paragraph?.Unit ?? "pt",
                 Alignment = definition.Paragraph?.Alignment
             };
@@ -159,6 +161,7 @@ public sealed class StylesModel : PageModel
                 {
                     SpaceBefore = SpaceBefore,
                     SpaceAfter = SpaceAfter,
+                    LineSpacing = LineSpacing,
                     Unit = ParagraphUnit,
                     Alignment = Alignment
                 }
@@ -174,10 +177,14 @@ public sealed class StylesModel : PageModel
         public string? HeaderFontName { get; set; }
         public float? HeaderFontSize { get; set; }
         public bool HeaderBold { get; set; } = true;
+        public float? HeaderHorizontalPadding { get; set; }
+        public float? HeaderVerticalPadding { get; set; }
         public string? BodyBackground { get; set; }
         public string? BodyTextColor { get; set; }
         public string? BodyFontName { get; set; }
         public float? BodyFontSize { get; set; }
+        public float? BodyHorizontalPadding { get; set; }
+        public float? BodyVerticalPadding { get; set; }
         public string? AlternatingBackground { get; set; }
         public int? BorderWidth { get; set; }
         public string? BorderColor { get; set; }
@@ -193,10 +200,14 @@ public sealed class StylesModel : PageModel
                 HeaderFontName = definition.HeaderStyle?.FontName,
                 HeaderFontSize = definition.HeaderStyle?.FontSize,
                 HeaderBold = definition.HeaderStyle?.Bold ?? true,
+                HeaderHorizontalPadding = definition.HeaderCellStyle?.PaddingLeft,
+                HeaderVerticalPadding = definition.HeaderCellStyle?.PaddingTop,
                 BodyBackground = definition.BodyCellStyle?.BackgroundColorHex,
                 BodyTextColor = definition.BodyStyle?.ColorHex,
                 BodyFontName = definition.BodyStyle?.FontName,
                 BodyFontSize = definition.BodyStyle?.FontSize,
+                BodyHorizontalPadding = definition.BodyCellStyle?.PaddingLeft,
+                BodyVerticalPadding = definition.BodyCellStyle?.PaddingTop,
                 AlternatingBackground = definition.AlternatingRowCellStyle?.BackgroundColorHex,
                 BorderWidth = definition.HeaderCellStyle?.Border?.Width
                               ?? definition.BodyCellStyle?.Border?.Width
@@ -229,6 +240,12 @@ public sealed class StylesModel : PageModel
                 HeaderCellStyle = new CellStyleDefinition
                 {
                     BackgroundColorHex = HeaderBackground,
+                    PaddingLeft = HeaderHorizontalPadding,
+                    PaddingRight = HeaderHorizontalPadding,
+                    PaddingTop = HeaderVerticalPadding,
+                    PaddingBottom = HeaderVerticalPadding,
+                    PaddingUnit = "pt",
+                    VerticalAlignment = "center",
                     Border = border
                 },
                 BodyStyle = new TextStyleDefinition
@@ -242,11 +259,23 @@ public sealed class StylesModel : PageModel
                 BodyCellStyle = new CellStyleDefinition
                 {
                     BackgroundColorHex = BodyBackground,
+                    PaddingLeft = BodyHorizontalPadding,
+                    PaddingRight = BodyHorizontalPadding,
+                    PaddingTop = BodyVerticalPadding,
+                    PaddingBottom = BodyVerticalPadding,
+                    PaddingUnit = "pt",
+                    VerticalAlignment = "center",
                     Border = border
                 },
                 AlternatingRowCellStyle = new CellStyleDefinition
                 {
                     BackgroundColorHex = AlternatingBackground,
+                    PaddingLeft = BodyHorizontalPadding,
+                    PaddingRight = BodyHorizontalPadding,
+                    PaddingTop = BodyVerticalPadding,
+                    PaddingBottom = BodyVerticalPadding,
+                    PaddingUnit = "pt",
+                    VerticalAlignment = "center",
                     Border = border
                 }
             };

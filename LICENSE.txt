@@ -1,0 +1,125 @@
+Text Control AI Source Available License
+Version 1.0
+Copyright 2026 Text Control GmbH and Text Control, LLC
+
+---------------------------------------------------------------------
+
+Text Control AI
+
+AI model integration and document automation libraries and reference
+applications built for use with TX Text Control technologies.
+
+---------------------------------------------------------------------
+
+1. Grant of Rights
+
+Subject to the terms of this license and a valid license for the
+required TX Text Control products, you are permitted to:
+
+- use this software internally or commercially
+- modify and customize the source code
+- create derivative works
+- integrate the software into internal or customer-facing systems
+- deploy modified versions within your organization or for customers
+- redistribute modified versions of this software together with
+  licensed TX Text Control products
+- commercially sell solutions and services built on top of this
+  software when used together with licensed TX Text Control products
+
+Users are not required to publicly disclose modifications made to
+this software.
+
+---------------------------------------------------------------------
+
+2. TX Text Control Dependency
+
+This software is intended for use with commercial TX Text Control
+products and related proprietary software libraries.
+
+A valid license for the required TX Text Control products is required
+to build, run, deploy, or use this software in production
+environments.
+
+TX Text Control binaries, license keys, trial keys, and proprietary
+assets are NOT included under this license. Third-party software and
+AI model weights remain subject to their respective licenses.
+
+For licensing information, visit:
+
+https://www.textcontrol.com/
+
+---------------------------------------------------------------------
+
+3. Permitted Customization
+
+Licensed users may customize this software for their own business
+requirements, including:
+
+- UI modifications
+- workflow customization
+- integration into existing systems
+- white-label deployments
+- proprietary internal extensions
+
+---------------------------------------------------------------------
+
+4. Platform Dependency Restriction
+
+This software is designed exclusively for use with licensed
+TX Text Control products.
+
+It is NOT permitted to:
+
+- remove TX Text Control as a core component of the platform
+- replace TX Text Control with alternative document processing,
+  document editing, or document rendering technologies
+- use this software independently of TX Text Control products
+- offer this software as a standalone SaaS or hosted service for
+  AI-assisted document processing or automation without
+  TX Text Control technologies
+- create competing standalone AI-assisted document processing or
+  automation products or services based on this software without
+  TX Text Control technologies
+
+Commercial usage, redistribution, and deployment are only permitted
+when the solution continues to use properly licensed TX Text Control
+components as a core part of the platform.
+
+---------------------------------------------------------------------
+
+5. Trademark Notice
+
+"Text Control", "TX Text Control", "Text Control AI", and related logos
+are trademarks or registered trademarks of Text Control GmbH and/or
+Text Control, LLC.
+
+This license does not grant permission to use Text Control branding,
+logos, or trademarks in a way that suggests official endorsement.
+
+---------------------------------------------------------------------
+
+6. No Warranty
+
+This software is provided as a reference implementation only.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND
+NONINFRINGEMENT.
+
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR
+ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF
+CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+---------------------------------------------------------------------
+
+7. Termination
+
+Any violation of the terms of this license automatically terminates
+the rights granted under this license.
+
+---------------------------------------------------------------------
+
+SPDX-License-Identifier: LicenseRef-TextControl-AI-SAL-1.0

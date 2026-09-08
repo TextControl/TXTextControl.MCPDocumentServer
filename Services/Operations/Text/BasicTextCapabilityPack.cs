@@ -6,6 +6,9 @@ public sealed class BasicTextCapabilityPack : ICapabilityPack
 {
     public const string PackName = "BasicText";
     public const string DefineStyle = "define_style";
+    public const string RenameStyle = "rename_style";
+    public const string DeleteStyle = "delete_style";
+    public const string CreateStylesFromParagraphs = "create_styles_from_paragraphs";
     public const string AppendParagraph = "append_paragraph";
     public const string ApplyStyleToParagraph = "apply_style_to_paragraph";
     public const string FormatParagraphs = "format_paragraphs";
@@ -20,6 +23,9 @@ public sealed class BasicTextCapabilityPack : ICapabilityPack
     public IReadOnlyCollection<string> OperationTypes { get; } =
     [
         DefineStyle,
+        RenameStyle,
+        DeleteStyle,
+        CreateStylesFromParagraphs,
         AppendParagraph,
         ApplyStyleToParagraph,
         FormatParagraphs,

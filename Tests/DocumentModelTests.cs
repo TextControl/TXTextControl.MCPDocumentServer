@@ -1,4 +1,5 @@
 using TxTextControl.McpServer.Models.DocumentModel;
+using System.Runtime.CompilerServices;
 using TxTextControl.McpServer.Models.Requests;
 using TxTextControl.McpServer.Options;
 using TxTextControl.McpServer.Services;
@@ -105,6 +106,37 @@ public sealed class DocumentModelTests
         Assert.Equal(75, operation.VerticalScaling);
         Assert.Equal("centered", operation.Alignment);
         Assert.Equal("displaceText", operation.InsertionMode);
+    }
+
+    [Fact]
+    public void CompileParagraphSupportsPlainTextShorthand()
+    {
+        var request = new RenderDocumentModelRequest
+        {
+            Document = new Document
+            {
+                Sections =
+                [
+                    new Section
+                    {
+                        Blocks =
+                        [
+                            new DocumentBlock
+                            {
+                                Type = "paragraph",
+                                Paragraph = new Paragraph { Text = "Hello from AI!" }
+                            }
+                        ]
+                    }
+                ]
+            }
+        };
+
+        var operation = Assert.Single(DocumentModelOperationCompiler.Compile(request).Operations);
+
+        Assert.Equal(BasicTextCapabilityPack.AppendParagraph, operation.Type);
+        Assert.Equal("Hello from AI!", operation.Text);
+        Assert.Equal("Hello from AI!", Assert.Single(operation.Runs).Text);
     }
 
     [Fact]
@@ -590,7 +622,7 @@ public sealed class DocumentModelTests
 
         var cellBlocks = document.Sections[0].Blocks[0].Table?.Rows[1].Cells[0].Blocks;
         Assert.Single(cellBlocks!);
-        Assert.Equal("field", cellBlocks[0].Type);
+        Assert.Equal("field", cellBlocks![0].Type);
         Assert.Equal("ProductName", cellBlocks[0].Field?.Name);
         Assert.Equal("Product Name", cellBlocks[0].Field?.Value);
     }
@@ -667,6 +699,77 @@ public sealed class DocumentModelTests
         }, 1);
 
         Assert.Empty(document.Sections[0].Blocks[0].Table!.Rows[1].Cells[0].Blocks);
+    }
+
+    [Fact]
+    public void ClearApplicationFieldsPreservesFormFieldBlocks()
+    {
+        var document = CreateDocument();
+        var context = new DocumentOperationContext(
+            document,
+            new Dictionary<string, TextStyleDefinition>(StringComparer.OrdinalIgnoreCase));
+        new AppendMergeFieldOperationHandler().Apply(context, new DocumentOperation
+        {
+            Type = FieldsCapabilityPack.AppendMergeField,
+            FieldName = "CustomerName"
+        }, 0);
+        new AppendFormFieldOperationHandler().Apply(context, new DocumentOperation
+        {
+            Type = FieldsCapabilityPack.AppendFormField,
+            FieldName = "approved",
+            FormFieldType = "checkbox"
+        }, 1);
+
+        new ClearApplicationFieldsOperationHandler().Apply(context, new DocumentOperation
+        {
+            Type = FieldsCapabilityPack.ClearApplicationFields
+        }, 2);
+
+        var block = Assert.Single(document.Sections[0].Blocks);
+        Assert.Equal("form", block.Field?.Type);
+        Assert.Equal("approved", block.Field?.Name);
+    }
+
+    [Fact]
+    public void ClearFormFieldsRemovesFieldsFromOriginalModelLists()
+    {
+        var document = CreateDocument();
+        var context = new DocumentOperationContext(
+            document,
+            new Dictionary<string, TextStyleDefinition>(StringComparer.OrdinalIgnoreCase));
+        new AppendFormFieldOperationHandler().Apply(context, new DocumentOperation
+        {
+            Type = FieldsCapabilityPack.AppendFormField,
+            FieldName = "signature",
+            FormFieldType = "text"
+        }, 0);
+
+        new ClearFormFieldsOperationHandler().Apply(context, new DocumentOperation
+        {
+            Type = FieldsCapabilityPack.ClearFormFields
+        }, 1);
+
+        Assert.Empty(document.Sections[0].Blocks);
+    }
+
+    [Fact]
+    public void UpdatingUnknownFieldsFailsInsteadOfReportingFalseSuccess()
+    {
+        var document = CreateDocument();
+        var context = new DocumentOperationContext(
+            document,
+            new Dictionary<string, TextStyleDefinition>(StringComparer.OrdinalIgnoreCase));
+
+        Assert.Throws<ArgumentException>(() => new UpdateMergeFieldOperationHandler().Apply(context, new DocumentOperation
+        {
+            Type = FieldsCapabilityPack.UpdateMergeField,
+            FieldName = "Missing"
+        }, 0));
+        Assert.Throws<ArgumentException>(() => new UpdateFormFieldOperationHandler().Apply(context, new DocumentOperation
+        {
+            Type = FieldsCapabilityPack.UpdateFormField,
+            FieldName = "Missing"
+        }, 1));
     }
 
     [Fact]
@@ -978,9 +1081,8 @@ public sealed class DocumentModelTests
         Assert.Equal("Body", operations[2].StyleName);
         Assert.Equal(TableCapabilityPack.AppendTable, operations[3].Type);
         Assert.Equal("10", operations[3].TableId);
-        Assert.Equal(TableCapabilityPack.ApplyTableStylePreset, operations[4].Type);
-        Assert.Equal("10", operations[4].TableId);
-        Assert.Equal("Professional Blue", operations[4].StyleName);
+        Assert.Equal("Professional Blue", operations[3].StyleName);
+        Assert.Equal(4, operations.Count);
     }
 
     [Fact]
@@ -1056,11 +1158,11 @@ public sealed class DocumentModelTests
 
         Assert.Empty(compiled.Warnings);
         Assert.Equal(TableCapabilityPack.AppendTable, compiled.Request.Operations[0].Type);
-        Assert.Equal(TableCapabilityPack.ApplyTableStylePreset, compiled.Request.Operations[1].Type);
-        Assert.Equal(TableCapabilityPack.FormatTableCell, compiled.Request.Operations[2].Type);
-        Assert.Equal("#FFC0CB", compiled.Request.Operations[2].CellStyle?.BackgroundColorHex);
-        Assert.Equal(20, compiled.Request.Operations[2].Style?.FontSize);
-        Assert.Equal("pt", compiled.Request.Operations[2].Style?.FontSizeUnit);
+        Assert.Equal("Professional Blue", compiled.Request.Operations[0].StyleName);
+        Assert.Equal(TableCapabilityPack.FormatTableCell, compiled.Request.Operations[1].Type);
+        Assert.Equal("#FFC0CB", compiled.Request.Operations[1].CellStyle?.BackgroundColorHex);
+        Assert.Equal(20, compiled.Request.Operations[1].Style?.FontSize);
+        Assert.Equal("pt", compiled.Request.Operations[1].Style?.FontSizeUnit);
     }
 
     [Fact]
@@ -1677,6 +1779,267 @@ public sealed class DocumentModelTests
             ]
         };
 
+    [Fact]
+    public void CompilerRepairsAndStylesWeakModelInvoicePayload()
+    {
+        var header = new TableRow
+        {
+            Cells =
+            [
+                CreateTextCell("h1", "Description"),
+                CreateTextCell("h2", "Quantity"),
+                CreateTextCell("h3", "Unit Price"),
+                CreateTextCell("h4", "Amount")
+            ]
+        };
+        var document = new Document
+        {
+            Title = "INVOICE",
+            Sections =
+            [
+                new Section
+                {
+                    Blocks =
+                    [
+                        CreateTextBlock("Invoice Number: INV-1001"),
+                        CreateTextBlock("Date: September 4, 2026"),
+                        new DocumentBlock
+                        {
+                            Type = "table",
+                            Table = new Table { Rows = [header] }
+                        },
+                        CreateTextBlock("Professional Consulting | 40 | $150.00 | $6,000.00"),
+                        CreateTextBlock("Implementation Support | 12 | $125.00 | $1,500.00"),
+                        CreateTextBlock("Training | 4 | $100.00 | $400.00"),
+                        CreateTextBlock("Subtotal: $7,900.00"),
+                        CreateTextBlock("Tax (8%): $632.00"),
+                        CreateTextBlock("Total: $8,532.00"),
+                        CreateTextBlock("Payment Terms: Due within 30 days")
+                    ]
+                }
+            ]
+        };
+        var options = new DocumentAutomationOptions
+        {
+            DefaultPageLayout = new PageLayoutDefinition
+            {
+                PageSize = "Letter",
+                Unit = "in",
+                MarginLeft = 0.8f,
+                MarginRight = 0.8f
+            },
+            StyleRoles = new StyleRoleDefinition
+            {
+                Title = "Title",
+                Heading1 = "Heading",
+                Heading2 = "Heading2",
+                Body = "Body"
+            },
+            TableStylePresets = [new TableStylePresetDefinition { Name = "Professional Blue" }]
+        };
+
+        var compiled = DocumentModelOperationCompiler.CompileDetailed(
+            new RenderDocumentModelRequest { CreateIfMissing = true, Document = document },
+            options);
+
+        Assert.Contains(compiled.Warnings, warning => warning.Contains("Recovered 3", StringComparison.Ordinal));
+        Assert.Contains(compiled.Warnings, warning => warning.Contains("invoice quality profile", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(4, document.Sections[0].Blocks.Single(block => block.Table is not null).Table!.Rows.Count);
+        Assert.DoesNotContain(document.Sections[0].Blocks, block =>
+            block.Paragraph?.Text?.Contains('|', StringComparison.Ordinal) == true);
+
+        var layout = compiled.Request.Operations.First();
+        Assert.Equal(SectionCapabilityPack.SetSectionLayout, layout.Type);
+        Assert.Equal("Letter", layout.PageLayout?.PageSize);
+
+        var tableOperation = compiled.Request.Operations.Single(operation => operation.Type == TableCapabilityPack.AppendTable);
+        Assert.Equal(4, tableOperation.Rows.Count);
+        Assert.Equal(new float?[] { 255, 68, 84, 90 }, tableOperation.ColumnWidths);
+        Assert.Equal("pt", tableOperation.ColumnWidthUnit);
+
+        var totalOperation = compiled.Request.Operations.Single(operation =>
+            operation.Type == BasicTextCapabilityPack.AppendParagraph
+            && operation.Text == "Total: $8,532.00");
+        Assert.Equal("right", totalOperation.Paragraph?.Alignment);
+
+        Assert.Contains(compiled.Request.Operations, operation =>
+            operation.Type == BasicTextCapabilityPack.AppendParagraph
+            && operation.Text == "Payment Terms"
+            && operation.StyleName == "Heading2");
+    }
+
+    [Fact]
+    public void CompilerMapsSemanticParagraphRoleAndPreservesExplicitParagraphFormatting()
+    {
+        var block = CreateTextBlock("Payment Terms");
+        block.Paragraph!.Role = "heading2";
+        block.Paragraph.Alignment = "center";
+        var options = new DocumentAutomationOptions
+        {
+            StyleRoles = new StyleRoleDefinition { Heading2 = "Subheading", Body = "Body" }
+        };
+
+        var operation = Assert.Single(DocumentModelOperationCompiler.Compile(
+            new RenderDocumentModelRequest
+            {
+                Document = new Document { Sections = [new Section { Blocks = [block] }] }
+            },
+            options).Operations);
+
+        Assert.Equal("Subheading", operation.StyleName);
+        Assert.Equal("center", operation.Paragraph?.Alignment);
+    }
+
+    [Fact]
+    public void CompilerMergesExplicitPageSizeWithUnspecifiedDefaultLayoutProperties()
+    {
+        var options = new DocumentAutomationOptions
+        {
+            DefaultPageLayout = new PageLayoutDefinition
+            {
+                PageSize = "Letter",
+                Orientation = "portrait",
+                Unit = "in",
+                MarginLeft = 0.8f,
+                MarginRight = 0.8f,
+                MarginTop = 0.75f,
+                MarginBottom = 0.75f
+            }
+        };
+        var document = new Document
+        {
+            Sections =
+            [
+                new Section
+                {
+                    PageLayout = new PageLayoutDefinition { PageSize = "A4" },
+                    Blocks = [CreateTextBlock("Body")]
+                }
+            ]
+        };
+
+        var layout = DocumentModelOperationCompiler.Compile(
+            new RenderDocumentModelRequest { Document = document },
+            options).Operations.First(operation => operation.Type == SectionCapabilityPack.SetSectionLayout).PageLayout;
+
+        Assert.NotNull(layout);
+        Assert.Equal("A4", layout.PageSize);
+        Assert.Equal("portrait", layout.Orientation);
+        Assert.Equal("in", layout.Unit);
+        Assert.Equal(0.8f, layout.MarginLeft);
+        Assert.Equal(0.8f, layout.MarginRight);
+        Assert.Equal(0.75f, layout.MarginTop);
+        Assert.Equal(0.75f, layout.MarginBottom);
+    }
+
+    [Fact]
+    public void CompilerKeepsExplicitElementStyleAndDefaultsUnstyledBodyElements()
+    {
+        var explicitlyStyled = CreateTextBlock("Explicit heading");
+        explicitlyStyled.Paragraph!.StyleName = "Customer Heading";
+        var options = new DocumentAutomationOptions
+        {
+            DefaultParagraphStyleName = "Body",
+            StyleRoles = new StyleRoleDefinition { Body = "Body" }
+        };
+
+        var operations = DocumentModelOperationCompiler.Compile(
+            new RenderDocumentModelRequest
+            {
+                Document = new Document
+                {
+                    Sections =
+                    [
+                        new Section
+                        {
+                            Blocks = [explicitlyStyled, CreateTextBlock("Unstyled body")]
+                        }
+                    ]
+                }
+            },
+            options).Operations.Where(operation => operation.Type == BasicTextCapabilityPack.AppendParagraph).ToList();
+
+        Assert.Equal("Customer Heading", operations[0].StyleName);
+        Assert.Equal("Body", operations[1].StyleName);
+    }
+
+    [Fact]
+    public void CompilerRejectsMalformedCompletedInvoiceRows()
+    {
+        var table = new Table
+        {
+            Rows =
+            [
+                new TableRow
+                {
+                    Cells =
+                    [
+                        CreateTextCell("h1", "Description"),
+                        CreateTextCell("h2", "Quantity"),
+                        CreateTextCell("h3", "Unit Price"),
+                        CreateTextCell("h4", "Amount")
+                    ]
+                },
+                new TableRow
+                {
+                    Cells =
+                    [
+                        CreateTextCell("r1c1", "Professional Services"),
+                        CreateTextCell("r1c2", ", 150.00"),
+                        CreateTextCell("r1c3", ", 2250.00"),
+                        CreateTextCell("r1c4", "")
+                    ]
+                }
+            ]
+        };
+
+        var exception = Assert.Throws<ArgumentException>(() => DocumentModelOperationCompiler.Compile(
+            new RenderDocumentModelRequest
+            {
+                Document = new Document
+                {
+                    Title = "INVOICE",
+                    Sections = [new Section { Blocks = [new DocumentBlock { Type = "table", Table = table }] }]
+                }
+            }));
+
+        Assert.Contains("description, quantity, unit price, amount", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void CompilerRejectsParagraphOnlyInvoiceAndCorrectsFalseTitle()
+    {
+        var firstLineItem = CreateTextBlock("Line Item 1: Web Development Services");
+        firstLineItem.Paragraph!.StyleName = "Title";
+        var document = new Document
+        {
+            Sections =
+            [
+                new Section
+                {
+                    Blocks =
+                    [
+                        firstLineItem,
+                        CreateTextBlock("Line Item 2: UI/UX Design"),
+                        CreateTextBlock("Line Item 3: Server Setup and Configuration"),
+                        CreateTextBlock("Subtotal: $3,500.00"),
+                        CreateTextBlock("Tax (10%): $350.00"),
+                        CreateTextBlock("Total: $3,850.00"),
+                        CreateTextBlock("Payment Terms: Net 30 days")
+                    ]
+                }
+            ]
+        };
+
+        var exception = Assert.Throws<ArgumentException>(() => DocumentModelOperationCompiler.Compile(
+            new RenderDocumentModelRequest { CreateIfMissing = true, Document = document }));
+
+        Assert.Contains("real line-item table", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("INVOICE", document.Title);
+        Assert.Null(firstLineItem.Paragraph.StyleName);
+        Assert.Equal("body", firstLineItem.Paragraph.Role);
+    }
+
     private static void AddSampleTable(Document document, string id)
         => document.Sections[0].Blocks.Add(new DocumentBlock
         {
@@ -1736,15 +2099,16 @@ public sealed class DocumentModelTests
             }
         };
 
-    private static string GetRepositoryRoot()
+    private static string GetRepositoryRoot([CallerFilePath] string sourceFilePath = "")
     {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "TxTextControl.McpServer.sln")))
+        var testsDirectory = Path.GetDirectoryName(sourceFilePath);
+        if (!string.IsNullOrWhiteSpace(testsDirectory))
         {
-            directory = directory.Parent;
+            return Directory.GetParent(testsDirectory)?.FullName
+                ?? throw new InvalidOperationException("Could not locate repository root.");
         }
 
-        return directory?.FullName ?? throw new InvalidOperationException("Could not locate repository root.");
+        throw new InvalidOperationException("Could not locate repository root.");
     }
 
 }

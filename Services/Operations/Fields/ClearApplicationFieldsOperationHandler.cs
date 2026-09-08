@@ -36,13 +36,18 @@ public sealed class ClearApplicationFieldsOperationHandler : IDocumentOperationH
     {
         if (context.TryGetTextControl(out var tx))
         {
-            tx.ApplicationFields.Clear(operation.KeepText);
+            foreach (FieldContainer container in FieldInsertionUtilities.EnumerateFieldContainers(tx))
+            {
+                container.Content.ApplicationFields.Clear(operation.KeepText);
+            }
         }
 
         var removed = 0;
         foreach (var section in context.Document.Sections)
         {
             removed += RemoveFieldBlocks(section.Blocks);
+            if (section.Header is not null) removed += RemoveFieldBlocks(section.Header.Blocks);
+            if (section.Footer is not null) removed += RemoveFieldBlocks(section.Footer.Blocks);
         }
 
         return new OperationResult
@@ -63,7 +68,9 @@ public sealed class ClearApplicationFieldsOperationHandler : IDocumentOperationH
     private static int RemoveFieldBlocks(List<DocumentModel.DocumentBlock> blocks)
     {
         var removed = blocks.RemoveAll(block =>
-            string.Equals(block.Type, "field", StringComparison.OrdinalIgnoreCase));
+            string.Equals(block.Type, "field", StringComparison.OrdinalIgnoreCase)
+            && block.Field is not null
+            && !string.Equals(block.Field.Type, "form", StringComparison.OrdinalIgnoreCase));
 
         foreach (var table in blocks
                      .Where(block => string.Equals(block.Type, "table", StringComparison.OrdinalIgnoreCase))

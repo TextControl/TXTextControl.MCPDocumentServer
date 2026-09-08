@@ -4,6 +4,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
+    <IsTextControlFriendTest>true</IsTextControlFriendTest>
   </PropertyGroup>
 
   <ItemGroup>
@@ -23,4 +24,5 @@
     <None Remove="bin\**\*;obj\**\*;TestArtifacts\**\*" />
     <EmbeddedResource Remove="bin\**\*;obj\**\*;TestArtifacts\**\*" />
   </ItemGroup>
+  <Import Project="../build/PackageSettings.targets" />
 </Project>

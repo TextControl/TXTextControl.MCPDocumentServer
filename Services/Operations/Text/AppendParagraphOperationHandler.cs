@@ -20,14 +20,15 @@ public sealed class AppendParagraphOperationHandler : IDocumentOperationHandler
         Description = "Appends one paragraph to the end of the document, optionally with inline styled runs.",
         Intent = "Use for normal prose, headings, captions, and inline emphasis without text-offset formatting.",
         RequiredProperties = ["type", "text or runs"],
-        OptionalProperties = ["styleName", "runs"],
+        OptionalProperties = ["styleName", "paragraph", "runs"],
         Properties = new()
         {
             ["text"] = "Paragraph text to append.",
             ["runs"] = "Optional ordered array of { text, styleName, style } inline runs. When provided, runs are rendered instead of text. Omit run style fields unless the user explicitly asks for inline styling.",
             ["runs[].style"] = "Optional inline TextStyleDefinition for a run, such as { bold: true }. Omit unless the user explicitly asks for inline styling.",
             ["runs[].styleName"] = "Optional named style applied directly to the run. Omit unless the user explicitly asks for this named style.",
-            ["styleName"] = "Optional predefined style name to apply to the whole paragraph. Omit when the prompt contains no explicit style instruction; during document creation the first unstyled title-like body paragraph uses the configured title role and later unstyled paragraphs use the configured body default."
+            ["styleName"] = "Optional predefined style name to apply to the whole paragraph. Omit when the prompt contains no explicit style instruction; during document creation the first unstyled title-like body paragraph uses the configured title role and later unstyled paragraphs use the configured body default.",
+            ["paragraph"] = "Optional paragraph formatting override: alignment, spacing, and line spacing. The override is layered over the selected named/default style."
         },
         Example = new()
         {
@@ -92,6 +93,13 @@ public sealed class AppendParagraphOperationHandler : IDocumentOperationHandler
                 }
             }
 
+            if (operation.Paragraph is not null)
+            {
+                DocumentOperationFormatter.ApplyParagraphStyle(
+                    tx.Paragraphs[tx.Paragraphs.Count],
+                    operation.Paragraph);
+            }
+
             var runOffset = textStart;
             foreach (var run in runs)
             {
@@ -119,7 +127,10 @@ public sealed class AppendParagraphOperationHandler : IDocumentOperationHandler
         {
             Id = Guid.NewGuid().ToString("N"),
             StyleName = effectiveStyleName,
-            ParagraphStyle = ResolveParagraphStyle(context, effectiveStyleName),
+            Alignment = operation.Paragraph?.Alignment,
+            ParagraphStyle = MergeParagraphStyles(
+                ResolveParagraphStyle(context, effectiveStyleName),
+                operation.Paragraph),
             Runs = runs
         };
 
@@ -202,6 +213,25 @@ public sealed class AppendParagraphOperationHandler : IDocumentOperationHandler
         }
 
         return context.GetDefaultTextStyle().Paragraph;
+    }
+
+    private static ParagraphStyleDefinition? MergeParagraphStyles(
+        ParagraphStyleDefinition? baseStyle,
+        ParagraphStyleDefinition? overrideStyle)
+    {
+        if (overrideStyle is null)
+        {
+            return baseStyle;
+        }
+
+        return new ParagraphStyleDefinition
+        {
+            Alignment = overrideStyle.Alignment ?? baseStyle?.Alignment,
+            SpaceBefore = overrideStyle.SpaceBefore ?? baseStyle?.SpaceBefore,
+            SpaceAfter = overrideStyle.SpaceAfter ?? baseStyle?.SpaceAfter,
+            LineSpacing = overrideStyle.LineSpacing ?? baseStyle?.LineSpacing,
+            Unit = overrideStyle.Unit
+        };
     }
 
     private static bool LooksLikeDocumentTitle(string text)

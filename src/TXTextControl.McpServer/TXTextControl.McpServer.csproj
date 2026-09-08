@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <!-- Preserve the existing standalone executable's assembly identity. -->
+    <AssemblyName>TXTextControl.McpServer.Core</AssemblyName>
+    <RootNamespace>TxTextControl.McpServer</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);1591</NoWarn>
+    <IsTextControlPackage>true</IsTextControlPackage>
+    <ExposeMcpTestInternals>true</ExposeMcpTestInternals>
+    <Version>0.1.0-alpha.2</Version>
+    <PackageId>TXTextControl.McpServer</PackageId>
+    <Title>TX Text Control MCP Server</Title>
+    <Description>Host a TX Text Control document MCP server in ASP.NET Core. Provides document creation, inspection, editing, conversion, styles, tables, fields, structured downloads, and a persistent document worker pool. Independent of AI providers and language models. Requires appropriately licensed TX Text Control products.</Description>
+    <PackageTags>TXTextControl;MCP;ModelContextProtocol;Documents;ASP.NETCore;PDF;DOCX;RTF;Markdown</PackageTags>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="ModelContextProtocol.AspNetCore" Version="2.2.0" />
+    <PackageReference Include="TXTextControl.Markdown.Core" Version="34.1.0-beta" />
+    <PackageReference Include="TXTextControl.TextControl.Core.SDK" Version="34.0.4" />
+  </ItemGroup>
+  <!-- Only this library compiles the shared implementation in its existing source folders. -->
+  <ItemGroup>
+    <Compile Include="../../Models/**/*.cs" Exclude="../../Models/Requests/Converters/**/*.cs" LinkBase="Models" />
+    <Compile Include="../../Options/**/*.cs" LinkBase="Options" />
+    <Compile Include="../../Services/**/*.cs" LinkBase="Services" />
+    <Compile Include="../../Tools/**/*.cs" LinkBase="Tools" />
+    <Using Include="Microsoft.AspNetCore.Hosting" />
+    <Using Include="Microsoft.AspNetCore.Http" />
+    <Using Include="Microsoft.Extensions.Configuration" />
+    <Using Include="Microsoft.Extensions.DependencyInjection" />
+    <Using Include="Microsoft.Extensions.Hosting" />
+    <Using Include="Microsoft.Extensions.Logging" />
+  </ItemGroup>
+  <Import Project="../../build/PackageSettings.targets" />
+  <Import Project="buildTransitive/TXTextControl.McpServer.targets" />
+  <ItemGroup>
+    <None Update="buildTransitive/TXTextControl.McpServer.targets" Pack="true" PackagePath="buildTransitive/TXTextControl.McpServer.targets" />
+  </ItemGroup>
+</Project>

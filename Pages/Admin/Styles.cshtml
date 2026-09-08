@@ -469,34 +469,38 @@
     <link rel="stylesheet" href="/css/mcp-admin.css" />
 </head>
 <body>
+    <div class="ambient ambient-one"></div>
+    <div class="ambient ambient-two"></div>
     <div class="shell">
         <aside>
             <div class="brand">
-                <img class="brand-logo" src="/assets/tx-text-control-dotnet-server.svg" alt="TX Text Control .NET Server" />
-                <div>
+                <img class="brand-logo" src="/assets/txai.svg" alt="Text Control AI" />
+                <div class="brand-copy">
                     <strong>MCP Document Server</strong>
-                    <span>Beta 1 admin</span>
+                    <span>Administration</span>
                 </div>
             </div>
             <nav aria-label="Admin navigation">
                 <a href="/admin">Automation</a>
-                <a class="active" href="/admin/styles">Style Presets</a>
-                <a href="/admin/automation">Raw JSON</a>
+                <a href="/admin/settings">Settings</a>
+                <a class="active" href="/admin/styles">Style presets</a>
                 <a href="/admin/mcp">MCP endpoint</a>
-                <a href="/admin/logout">Logout</a>
+                <a href="/admin/automation">JSON</a>
+                <a href="/admin/logout">Sign out</a>
             </nav>
         </aside>
         <main>
             <form method="post">
                 <div class="topbar">
                     <div>
-                        <img class="top-logo" src="/assets/tx-text-control-dotnet-server.svg" alt="TX Text Control .NET Server" />
-                        <h1>Style Presets</h1>
+                        <img class="top-logo" src="/assets/txai.svg" alt="Text Control AI" />
+                        <span class="eyebrow">DOCUMENT DESIGN SYSTEM</span>
+                        <h1>Style presets</h1>
                         <p class="subtle">Manage the named paragraph and table presets that AI clients can use in document operations.</p>
                     </div>
                     <div class="actions">
                         <a class="button" href="/admin">Automation</a>
-                        <button class="primary" type="submit">Save Presets</button>
+                        <button class="primary" type="submit">Save presets</button>
                     </div>
                 </div>
 
@@ -508,10 +512,9 @@
                 <section class="panel">
                     <div class="panel-header">
                         <div>
-                            <h2>Paragraph Presets</h2>
-                            <p>Semantic roles tell AI clients which preset to use for titles, headings, and body text.</p>
+                            <h2>Semantic style roles</h2>
+                            <p>Map document intent to a named preset before configuring the presets themselves.</p>
                         </div>
-                        <button class="primary" type="button" data-open-dialog="paragraph-preset-@newParagraphIndex">Add Paragraph Style</button>
                     </div>
                     <div class="role-grid">
                         <div>
@@ -551,6 +554,16 @@
                             </select>
                             <input asp-for="DefaultParagraphStyleName" type="hidden" value="@Model.StyleRoles.Body" />
                         </div>
+                    </div>
+                </section>
+
+                <section class="panel">
+                    <div class="panel-header">
+                        <div>
+                            <h2>Paragraph presets</h2>
+                            <p>Reusable typography and paragraph rhythm for titles, headings, and body content.</p>
+                        </div>
+                        <button class="primary" type="button" data-open-dialog="paragraph-preset-@newParagraphIndex">Add paragraph style</button>
                     </div>
 
                     @if (namedParagraphPresets.Count == 0)
@@ -611,6 +624,7 @@
                                                 <div class="summary-stack">
                                                     <span>Before @(preset.SpaceBefore?.ToString("0.#") ?? "0") @preset.ParagraphUnit</span>
                                                     <span>After @(preset.SpaceAfter?.ToString("0.#") ?? "0") @preset.ParagraphUnit</span>
+                                                    <span>Line @(preset.LineSpacing.HasValue ? (preset.LineSpacing.Value > 10 ? preset.LineSpacing.Value / 100 : preset.LineSpacing.Value).ToString("0.##") + "×" : "default")</span>
                                                 </div>
                                             </td>
                                             <td>@(preset.Alignment ?? "Default")</td>
@@ -643,10 +657,10 @@
                 <section class="panel">
                     <div class="panel-header">
                         <div>
-                            <h2>Table Presets</h2>
+                            <h2>Table presets</h2>
                             <p>These presets expand into TX cell formatting for headers, body rows, alternating rows, and borders.</p>
                         </div>
-                        <button class="primary" type="button" data-open-dialog="table-preset-@newTableIndex">Add Table Style</button>
+                        <button class="primary" type="button" data-open-dialog="table-preset-@newTableIndex">Add table style</button>
                     </div>
 
                     @if (namedTablePresets.Count == 0)
@@ -682,6 +696,7 @@
                                                     <span class="swatch-line"><span class="swatch" style="--swatch-color: @(preset.HeaderBackground ?? "transparent")"></span> Background @(preset.HeaderBackground ?? "Default")</span>
                                                     <span class="swatch-line"><span class="swatch" style="--swatch-color: @(preset.HeaderTextColor ?? "transparent")"></span> Text @(preset.HeaderTextColor ?? "Default")</span>
                                                     <span>@(preset.HeaderFontName ?? "Default") @(preset.HeaderFontSize?.ToString("0.#") ?? "-") pt@(preset.HeaderBold ? ", bold" : "")</span>
+                                                    <span>Padding @(preset.HeaderHorizontalPadding?.ToString("0.#") ?? "-") × @(preset.HeaderVerticalPadding?.ToString("0.#") ?? "-") pt</span>
                                                 </div>
                                             </td>
                                             <td>
@@ -689,6 +704,7 @@
                                                     <span class="swatch-line"><span class="swatch" style="--swatch-color: @(preset.BodyBackground ?? "transparent")"></span> Background @(preset.BodyBackground ?? "Default")</span>
                                                     <span class="swatch-line"><span class="swatch" style="--swatch-color: @(preset.BodyTextColor ?? "transparent")"></span> Text @(preset.BodyTextColor ?? "Default")</span>
                                                     <span>@(preset.BodyFontName ?? "Default") @(preset.BodyFontSize?.ToString("0.#") ?? "-") pt</span>
+                                                    <span>Padding @(preset.BodyHorizontalPadding?.ToString("0.#") ?? "-") × @(preset.BodyVerticalPadding?.ToString("0.#") ?? "-") pt</span>
                                                 </div>
                                             </td>
                                             <td>
@@ -717,7 +733,7 @@
                 @for (var i = 0; i < Model.ParagraphPresets.Count; i++)
                 {
                     var title = string.IsNullOrWhiteSpace(Model.ParagraphPresets[i].Name)
-                        ? "New Paragraph Style"
+                        ? "New paragraph style"
                         : $"Edit {Model.ParagraphPresets[i].Name}";
                     <dialog class="modal" id="paragraph-preset-@i">
                         <div class="modal-header">
@@ -728,67 +744,31 @@
                             <button class="button" type="button" data-close-dialog>Close</button>
                         </div>
                         <div class="modal-body">
-                            <div class="fields">
-                                <div class="wide">
-                                    <label asp-for="ParagraphPresets[i].Name">Name</label>
-                                    <input asp-for="ParagraphPresets[i].Name" placeholder="New paragraph style" />
+                            <fieldset>
+                                <legend>Identity and typography</legend>
+                                <div class="fields">
+                                    <div class="wide"><label asp-for="ParagraphPresets[i].Name">Style name</label><input asp-for="ParagraphPresets[i].Name" placeholder="New paragraph style" /></div>
+                                    <div class="wide"><label asp-for="ParagraphPresets[i].FontName">Font family</label><select asp-for="ParagraphPresets[i].FontName"><option value="">Document default</option>@foreach (var font in Model.SupportedFonts) { <option value="@font">@font</option> }</select></div>
+                                    <div><label asp-for="ParagraphPresets[i].FontSize">Font size</label><input asp-for="ParagraphPresets[i].FontSize" type="number" step="0.5" min="1" /></div>
+                                    <div><label asp-for="ParagraphPresets[i].FontSizeUnit">Size unit</label><select asp-for="ParagraphPresets[i].FontSizeUnit"><option value="pt">Points</option><option value="px">Pixels</option></select></div>
+                                    <div><label asp-for="ParagraphPresets[i].ColorHex">Text color</label><input asp-for="ParagraphPresets[i].ColorHex" type="color" /></div>
                                 </div>
-                                <div class="wide">
-                                    <label asp-for="ParagraphPresets[i].FontName">Font</label>
-                                    <select asp-for="ParagraphPresets[i].FontName">
-                                        <option value="">Default</option>
-                                        @foreach (var font in Model.SupportedFonts)
-                                        {
-                                            <option value="@font">@font</option>
-                                        }
-                                    </select>
+                                <div class="toggles">
+                                    <label><input asp-for="ParagraphPresets[i].Bold" /> Bold</label>
+                                    <label><input asp-for="ParagraphPresets[i].Italic" /> Italic</label>
+                                    <label><input asp-for="ParagraphPresets[i].Underline" /> Underline</label>
                                 </div>
-                                <div>
-                                    <label asp-for="ParagraphPresets[i].FontSize">Size</label>
-                                    <input asp-for="ParagraphPresets[i].FontSize" type="number" step="0.5" min="1" />
+                            </fieldset>
+                            <fieldset>
+                                <legend>Paragraph layout</legend>
+                                <div class="fields">
+                                    <div><label asp-for="ParagraphPresets[i].Alignment">Alignment</label><select asp-for="ParagraphPresets[i].Alignment"><option value="">Document default</option><option value="left">Left</option><option value="right">Right</option><option value="center">Center</option><option value="justify">Justify</option></select></div>
+                                    <div><label asp-for="ParagraphPresets[i].ParagraphUnit">Spacing unit</label><select asp-for="ParagraphPresets[i].ParagraphUnit"><option value="pt">Points</option><option value="px">Pixels</option></select></div>
+                                    <div><label asp-for="ParagraphPresets[i].SpaceBefore">Space before</label><input asp-for="ParagraphPresets[i].SpaceBefore" type="number" step="0.5" min="0" /></div>
+                                    <div><label asp-for="ParagraphPresets[i].SpaceAfter">Space after</label><input asp-for="ParagraphPresets[i].SpaceAfter" type="number" step="0.5" min="0" /></div>
+                                    <div><label asp-for="ParagraphPresets[i].LineSpacing">Line spacing</label><input asp-for="ParagraphPresets[i].LineSpacing" type="number" step="0.01" min="0.5" placeholder="1.08" /></div>
                                 </div>
-                                <div>
-                                    <label asp-for="ParagraphPresets[i].FontSizeUnit">Unit</label>
-                                    <select asp-for="ParagraphPresets[i].FontSizeUnit">
-                                        <option value="pt">pt</option>
-                                        <option value="px">px</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label asp-for="ParagraphPresets[i].ColorHex">Color</label>
-                                    <input asp-for="ParagraphPresets[i].ColorHex" type="color" />
-                                </div>
-                                <div>
-                                    <label asp-for="ParagraphPresets[i].SpaceBefore">Before</label>
-                                    <input asp-for="ParagraphPresets[i].SpaceBefore" type="number" step="0.5" min="0" />
-                                </div>
-                                <div>
-                                    <label asp-for="ParagraphPresets[i].SpaceAfter">After</label>
-                                    <input asp-for="ParagraphPresets[i].SpaceAfter" type="number" step="0.5" min="0" />
-                                </div>
-                                <div>
-                                    <label asp-for="ParagraphPresets[i].ParagraphUnit">Spacing unit</label>
-                                    <select asp-for="ParagraphPresets[i].ParagraphUnit">
-                                        <option value="pt">pt</option>
-                                        <option value="px">px</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label asp-for="ParagraphPresets[i].Alignment">Align</label>
-                                    <select asp-for="ParagraphPresets[i].Alignment">
-                                        <option value="">Default</option>
-                                        <option value="left">Left</option>
-                                        <option value="right">Right</option>
-                                        <option value="center">Center</option>
-                                        <option value="justify">Justify</option>
-                                    </select>
-                                </div>
-                            </div>
-                            <div class="toggles">
-                                <label><input asp-for="ParagraphPresets[i].Bold" /> Bold</label>
-                                <label><input asp-for="ParagraphPresets[i].Italic" /> Italic</label>
-                                <label><input asp-for="ParagraphPresets[i].Underline" /> Underline</label>
-                            </div>
+                            </fieldset>
                         </div>
                         <div class="modal-actions">
                             <label class="delete">
@@ -796,8 +776,8 @@
                                 Delete this preset on save
                             </label>
                             <div class="actions">
-                                <button class="button" type="button" data-close-dialog>Done</button>
-                                <button class="primary" type="submit">Save Presets</button>
+                                <button class="button" type="button" data-close-dialog>Cancel</button>
+                                <button class="primary" type="submit">Apply changes</button>
                             </div>
                         </div>
                     </dialog>
@@ -806,7 +786,7 @@
                 @for (var i = 0; i < Model.TablePresets.Count; i++)
                 {
                     var title = string.IsNullOrWhiteSpace(Model.TablePresets[i].Name)
-                        ? "New Table Style"
+                        ? "New table style"
                         : $"Edit {Model.TablePresets[i].Name}";
                     <dialog class="modal" id="table-preset-@i">
                         <div class="modal-header">
@@ -817,75 +797,38 @@
                             <button class="button" type="button" data-close-dialog>Close</button>
                         </div>
                         <div class="modal-body">
-                            <div class="fields">
-                                <div class="wide">
-                                    <label asp-for="TablePresets[i].Name">Name</label>
-                                    <input asp-for="TablePresets[i].Name" placeholder="New table style" />
+                            <fieldset>
+                                <legend>Preset identity</legend>
+                                <div class="fields"><div class="wide"><label asp-for="TablePresets[i].Name">Style name</label><input asp-for="TablePresets[i].Name" placeholder="New table style" /></div><div><label asp-for="TablePresets[i].HeaderRowIndex">Header row index</label><input asp-for="TablePresets[i].HeaderRowIndex" type="number" min="0" /></div></div>
+                            </fieldset>
+                            <fieldset>
+                                <legend>Header row</legend>
+                                <div class="fields">
+                                    <div><label asp-for="TablePresets[i].HeaderBackground">Background</label><input asp-for="TablePresets[i].HeaderBackground" type="color" /></div>
+                                    <div><label asp-for="TablePresets[i].HeaderTextColor">Text color</label><input asp-for="TablePresets[i].HeaderTextColor" type="color" /></div>
+                                    <div class="wide"><label asp-for="TablePresets[i].HeaderFontName">Font family</label><select asp-for="TablePresets[i].HeaderFontName"><option value="">Document default</option>@foreach (var font in Model.SupportedFonts) { <option value="@font">@font</option> }</select></div>
+                                    <div><label asp-for="TablePresets[i].HeaderFontSize">Font size (pt)</label><input asp-for="TablePresets[i].HeaderFontSize" type="number" step="0.5" min="1" /></div>
+                                    <div><label asp-for="TablePresets[i].HeaderHorizontalPadding">Horizontal padding (pt)</label><input asp-for="TablePresets[i].HeaderHorizontalPadding" type="number" step="0.5" min="0" /></div>
+                                    <div><label asp-for="TablePresets[i].HeaderVerticalPadding">Vertical padding (pt)</label><input asp-for="TablePresets[i].HeaderVerticalPadding" type="number" step="0.5" min="0" /></div>
                                 </div>
-                                <div>
-                                    <label asp-for="TablePresets[i].HeaderRowIndex">Header row</label>
-                                    <input asp-for="TablePresets[i].HeaderRowIndex" type="number" min="0" />
+                                <div class="toggles"><label><input asp-for="TablePresets[i].HeaderBold" /> Bold header text</label></div>
+                            </fieldset>
+                            <fieldset>
+                                <legend>Body rows</legend>
+                                <div class="fields">
+                                    <div><label asp-for="TablePresets[i].BodyBackground">Background</label><input asp-for="TablePresets[i].BodyBackground" type="color" /></div>
+                                    <div><label asp-for="TablePresets[i].AlternatingBackground">Alternating background</label><input asp-for="TablePresets[i].AlternatingBackground" type="color" /></div>
+                                    <div><label asp-for="TablePresets[i].BodyTextColor">Text color</label><input asp-for="TablePresets[i].BodyTextColor" type="color" /></div>
+                                    <div class="wide"><label asp-for="TablePresets[i].BodyFontName">Font family</label><select asp-for="TablePresets[i].BodyFontName"><option value="">Document default</option>@foreach (var font in Model.SupportedFonts) { <option value="@font">@font</option> }</select></div>
+                                    <div><label asp-for="TablePresets[i].BodyFontSize">Font size (pt)</label><input asp-for="TablePresets[i].BodyFontSize" type="number" step="0.5" min="1" /></div>
+                                    <div><label asp-for="TablePresets[i].BodyHorizontalPadding">Horizontal padding (pt)</label><input asp-for="TablePresets[i].BodyHorizontalPadding" type="number" step="0.5" min="0" /></div>
+                                    <div><label asp-for="TablePresets[i].BodyVerticalPadding">Vertical padding (pt)</label><input asp-for="TablePresets[i].BodyVerticalPadding" type="number" step="0.5" min="0" /></div>
                                 </div>
-                                <div>
-                                    <label asp-for="TablePresets[i].HeaderBackground">Header bg</label>
-                                    <input asp-for="TablePresets[i].HeaderBackground" type="color" />
-                                </div>
-                                <div>
-                                    <label asp-for="TablePresets[i].HeaderTextColor">Header text</label>
-                                    <input asp-for="TablePresets[i].HeaderTextColor" type="color" />
-                                </div>
-                                <div class="wide">
-                                    <label asp-for="TablePresets[i].HeaderFontName">Header font</label>
-                                    <select asp-for="TablePresets[i].HeaderFontName">
-                                        <option value="">Default</option>
-                                        @foreach (var font in Model.SupportedFonts)
-                                        {
-                                            <option value="@font">@font</option>
-                                        }
-                                    </select>
-                                </div>
-                                <div>
-                                    <label asp-for="TablePresets[i].HeaderFontSize">Header size</label>
-                                    <input asp-for="TablePresets[i].HeaderFontSize" type="number" step="0.5" min="1" />
-                                </div>
-                                <div>
-                                    <label asp-for="TablePresets[i].BodyBackground">Body bg</label>
-                                    <input asp-for="TablePresets[i].BodyBackground" type="color" />
-                                </div>
-                                <div>
-                                    <label asp-for="TablePresets[i].BodyTextColor">Body text</label>
-                                    <input asp-for="TablePresets[i].BodyTextColor" type="color" />
-                                </div>
-                                <div class="wide">
-                                    <label asp-for="TablePresets[i].BodyFontName">Body font</label>
-                                    <select asp-for="TablePresets[i].BodyFontName">
-                                        <option value="">Default</option>
-                                        @foreach (var font in Model.SupportedFonts)
-                                        {
-                                            <option value="@font">@font</option>
-                                        }
-                                    </select>
-                                </div>
-                                <div>
-                                    <label asp-for="TablePresets[i].BodyFontSize">Body size</label>
-                                    <input asp-for="TablePresets[i].BodyFontSize" type="number" step="0.5" min="1" />
-                                </div>
-                                <div>
-                                    <label asp-for="TablePresets[i].AlternatingBackground">Alt bg</label>
-                                    <input asp-for="TablePresets[i].AlternatingBackground" type="color" />
-                                </div>
-                                <div>
-                                    <label asp-for="TablePresets[i].BorderWidth">Border</label>
-                                    <input asp-for="TablePresets[i].BorderWidth" type="number" step="1" min="0" />
-                                </div>
-                                <div>
-                                    <label asp-for="TablePresets[i].BorderColor">Border color</label>
-                                    <input asp-for="TablePresets[i].BorderColor" type="color" />
-                                </div>
-                            </div>
-                            <div class="toggles">
-                                <label><input asp-for="TablePresets[i].HeaderBold" /> Header bold</label>
-                            </div>
+                            </fieldset>
+                            <fieldset>
+                                <legend>Borders</legend>
+                                <div class="fields"><div><label asp-for="TablePresets[i].BorderWidth">Width (twips)</label><input asp-for="TablePresets[i].BorderWidth" type="number" step="1" min="0" /></div><div><label asp-for="TablePresets[i].BorderColor">Color</label><input asp-for="TablePresets[i].BorderColor" type="color" /></div></div>
+                            </fieldset>
                         </div>
                         <div class="modal-actions">
                             <label class="delete">
@@ -893,8 +836,8 @@
                                 Delete this preset on save
                             </label>
                             <div class="actions">
-                                <button class="button" type="button" data-close-dialog>Done</button>
-                                <button class="primary" type="submit">Save Presets</button>
+                                <button class="button" type="button" data-close-dialog>Cancel</button>
+                                <button class="primary" type="submit">Apply changes</button>
                             </div>
                         </div>
                     </dialog>
@@ -902,27 +845,45 @@
 
                 <div class="footer-actions">
                     <span class="subtle">Preset changes are written to <code>appsettings.json</code> and used by new MCP operations immediately.</span>
-                    <button class="primary" type="submit">Save Presets</button>
+                    <button class="primary" type="submit">Save presets</button>
                 </div>
             </form>
         </main>
+        <footer class="admin-footer"><span><strong>Text Control</strong> · Document processing for intelligent applications</span><span>TX Text Control Document MCP Server</span></footer>
     </div>
     <script>
         document.querySelectorAll('[data-open-dialog]').forEach((button) => {
             button.addEventListener('click', () => {
                 const dialog = document.getElementById(button.dataset.openDialog);
                 if (dialog && typeof dialog.showModal === 'function') {
+                    dialog._fieldSnapshot = [...dialog.querySelectorAll('input, select')].map((field) => ({
+                        field,
+                        value: field.value,
+                        checked: field.checked
+                    }));
                     dialog.showModal();
                 }
             });
         });
 
+        const cancelDialog = (dialog) => {
+            dialog?._fieldSnapshot?.forEach(({ field, value, checked }) => {
+                field.value = value;
+                field.checked = checked;
+            });
+            dialog?.close();
+        };
+
         document.querySelectorAll('[data-close-dialog]').forEach((button) => {
             button.addEventListener('click', () => {
-                const dialog = button.closest('dialog');
-                if (dialog) {
-                    dialog.close();
-                }
+                cancelDialog(button.closest('dialog'));
+            });
+        });
+
+        document.querySelectorAll('dialog.modal').forEach((dialog) => {
+            dialog.addEventListener('cancel', (event) => {
+                event.preventDefault();
+                cancelDialog(dialog);
             });
         });
     </script>

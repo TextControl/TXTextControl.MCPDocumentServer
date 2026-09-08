@@ -8,4 +8,5 @@ public sealed class TemplateMergeFieldInfo
     public string Text { get; set; } = string.Empty;
     public string TypeName { get; set; } = string.Empty;
     public IReadOnlyList<string> Parameters { get; set; } = [];
+    public string Location { get; set; } = "body";
 }

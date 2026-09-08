@@ -1,12 +1,16 @@
 using Microsoft.Extensions.Options;
 using System.ComponentModel;
 using System.Drawing;
+using System.Runtime.CompilerServices;
+using System.Text;
 using TxTextControl.McpServer.Models.DocumentModel;
 using TxTextControl.McpServer.Models.Requests;
+using TxTextControl.McpServer.Models.Responses;
 using TxTextControl.McpServer.Options;
 using TxTextControl.McpServer.Services;
 using TxTextControl.McpServer.Services.Admin;
 using TxTextControl.McpServer.Services.Operations;
+using TxTextControl.McpServer.Tools;
 using TXTextControl;
 using Xunit;
 using Neutral = TxTextControl.McpServer.Models.DocumentModel;
@@ -15,6 +19,852 @@ namespace TxTextControl.McpServer.Tests;
 
 public sealed class DocumentCreationIntegrationTests
 {
+    [SkippableFact]
+    public void KnowledgeExtractionPagesLosslessSourcesWithoutChangingAnotherSession()
+    {
+        SkipIfTxLicenseIsMissing();
+        string root = Path.Combine(Path.GetTempPath(), "tx-knowledge-extraction-" + Guid.NewGuid().ToString("N"));
+        var workflow = CreateWorkflow(root);
+        var working = ApplyOperationsOrSkipIfUnlicensed(workflow, new ApplyOperationsRequest
+        { Operations = [new DocumentOperation { Type = BasicTextCapabilityPack.AppendParagraph, Text = "Unchanged working agreement." }] });
+        var operations = Enumerable.Range(0, 70).Select(i => new DocumentOperation { Type = BasicTextCapabilityPack.AppendParagraph, Text = $"Reference paragraph {i + 1}: private approved wording." }).ToList();
+        operations.Add(new DocumentOperation { Type = TableCapabilityPack.AppendTable, Rows = [["Product", "Price"], ["Widget", "42 EUR"]] });
+        var reference = ApplyOperationsOrSkipIfUnlicensed(workflow, new ApplyOperationsRequest { Operations = operations });
+        try
+        {
+            List<KnowledgeExtractionBlock> blocks = [];
+            int? cursor = 0;
+            while (cursor.HasValue)
+            {
+                var page = workflow.ExtractKnowledgeBlocks(reference.SessionId, cursor.Value);
+                Assert.True(page.Blocks.Count <= 32);
+                blocks.AddRange(page.Blocks); cursor = page.NextBlock;
+            }
+            Assert.Contains(blocks, b => b.Text.Contains("Reference paragraph 70", StringComparison.Ordinal));
+            Assert.Contains(blocks, b => b.Locator.StartsWith("Table ", StringComparison.Ordinal) && b.Text.Contains("Widget", StringComparison.Ordinal) && b.TableHeader!.Contains("Price", StringComparison.Ordinal));
+            var original = workflow.InspectDocument(new InspectDocumentRequest { SessionId = working.SessionId });
+            Assert.Contains(original.Paragraphs, p => p.Text.Contains("Unchanged working agreement.", StringComparison.Ordinal));
+            Assert.DoesNotContain(original.Paragraphs, p => p.Text.Contains("Reference paragraph", StringComparison.Ordinal));
+        }
+        finally { workflow.DeleteSession(working.SessionId); workflow.DeleteSession(reference.SessionId); }
+    }
+
+    [SkippableFact]
+    public void HeadingAwareSectionToolsReplaceOnlyTheResolvedBody()
+    {
+        SkipIfTxLicenseIsMissing();
+        var workflow = CreateWorkflow(Path.Combine(
+            Path.GetTempPath(),
+            "tx-mcp-section-tool-tests",
+            Guid.NewGuid().ToString("N")));
+        var created = ApplyOperationsOrSkipIfUnlicensed(workflow, new ApplyOperationsRequest
+        {
+            Operations =
+            [
+                new DocumentOperation { Type = BasicTextCapabilityPack.AppendParagraph, StyleName = "Heading", Text = "1. Definitions" },
+                new DocumentOperation { Type = BasicTextCapabilityPack.AppendParagraph, StyleName = "Body", Text = "Party A means Acme Corporation." },
+                new DocumentOperation { Type = BasicTextCapabilityPack.AppendParagraph, StyleName = "Heading", Text = "7. NO WARRANTY" },
+                new DocumentOperation { Type = BasicTextCapabilityPack.AppendParagraph, StyleName = "Body", Text = "The information is provided as-is." },
+                new DocumentOperation { Type = BasicTextCapabilityPack.AppendParagraph, StyleName = "Body", Text = "Neither party makes any warranty." },
+                new DocumentOperation { Type = BasicTextCapabilityPack.AppendParagraph, StyleName = "Heading", Text = "8. LIMITATION OF LIABILITY" },
+                new DocumentOperation { Type = BasicTextCapabilityPack.AppendParagraph, StyleName = "Body", Text = "Liability remains limited." }
+            ]
+        });
+        var tools = new SectionTools(workflow);
+
+        var inspected = Assert.IsType<Models.Responses.DocumentSectionResponse>(
+            tools.InspectDocumentSection(new InspectDocumentSectionRequest
+            {
+                SessionId = created.SessionId,
+                Heading = "No Warranty"
+            }));
+        var edited = Assert.IsType<Models.Responses.DocumentSectionEditResponse>(
+            tools.ReplaceDocumentSection(new ReplaceDocumentSectionRequest
+            {
+                SessionId = created.SessionId,
+                Heading = inspected.Heading,
+                ExpectedContentHash = inspected.ContentHash,
+                ReplacementText = "Party A makes no warranty regarding forecasts supplied by Party B.\nParty B assumes the risk of relying on those forecasts."
+            }));
+        var verified = workflow.InspectDocumentSection(new InspectDocumentSectionRequest
+        {
+            SessionId = created.SessionId,
+            Heading = "No Warranty"
+        });
+        var allParagraphs = workflow.InspectDocument(new InspectDocumentRequest
+        {
+            SessionId = created.SessionId
+        }).Paragraphs;
+
+        Assert.Equal(created.SessionId, edited.SessionId);
+        Assert.Equal("7. NO WARRANTY", verified.Heading);
+        Assert.Equal("Heading", verified.HeadingStyleName);
+        Assert.Equal(2, verified.Paragraphs.Count);
+        Assert.Contains("Party A makes no warranty", verified.Paragraphs[0].Text, StringComparison.Ordinal);
+        Assert.Contains("Party B assumes the risk", verified.Paragraphs[1].Text, StringComparison.Ordinal);
+        Assert.Contains(allParagraphs, paragraph => paragraph.Text == "8. LIMITATION OF LIABILITY");
+        Assert.DoesNotContain(allParagraphs, paragraph => paragraph.Text.Contains("provided as-is", StringComparison.Ordinal));
+        Assert.NotEqual(inspected.ContentHash, verified.ContentHash);
+    }
+
+    [SkippableFact]
+    public void ReplaceDocumentSectionRejectsAStaleInspectionHash()
+    {
+        SkipIfTxLicenseIsMissing();
+        var workflow = CreateWorkflow(Path.Combine(
+            Path.GetTempPath(),
+            "tx-mcp-stale-section-tests",
+            Guid.NewGuid().ToString("N")));
+        var created = ApplyOperationsOrSkipIfUnlicensed(workflow, new ApplyOperationsRequest
+        {
+            Operations =
+            [
+                new DocumentOperation { Type = BasicTextCapabilityPack.AppendParagraph, StyleName = "Heading", Text = "Payment" },
+                new DocumentOperation { Type = BasicTextCapabilityPack.AppendParagraph, StyleName = "Body", Text = "Payment is due in 30 days." },
+                new DocumentOperation { Type = BasicTextCapabilityPack.AppendParagraph, StyleName = "Heading", Text = "Termination" },
+                new DocumentOperation { Type = BasicTextCapabilityPack.AppendParagraph, StyleName = "Body", Text = "Either party may terminate." }
+            ]
+        });
+        var inspected = workflow.InspectDocumentSection(new InspectDocumentSectionRequest
+        {
+            SessionId = created.SessionId,
+            Heading = "Payment"
+        });
+        workflow.EditDocument(new EditDocumentRequest
+        {
+            SessionId = created.SessionId,
+            ParagraphIndex = inspected.BodyStartParagraphIndex,
+            ReplacementText = "Payment is now due in 15 days."
+        });
+
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            workflow.ReplaceDocumentSection(new ReplaceDocumentSectionRequest
+            {
+                SessionId = created.SessionId,
+                Heading = "Payment",
+                ExpectedContentHash = inspected.ContentHash,
+                ReplacementText = "Payment is waived."
+            }));
+
+        Assert.Contains("changed after it was inspected", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [SkippableFact]
+    public void InsertTableToolAddsRowsWithoutExposingAnOperationType()
+    {
+        SkipIfTxLicenseIsMissing();
+        var workflow = CreateWorkflow(Path.Combine(
+            Path.GetTempPath(),
+            "tx-mcp-insert-table-tool-tests",
+            Guid.NewGuid().ToString("N")));
+        var created = ApplyOperationsOrSkipIfUnlicensed(workflow, new ApplyOperationsRequest
+        {
+            Operations =
+            [
+                new DocumentOperation
+                {
+                    Type = BasicTextCapabilityPack.AppendParagraph,
+                    Text = "Existing document content"
+                }
+            ]
+        });
+
+        object result = new TableTools(workflow).InsertTable(new InsertTableRequest
+        {
+            SessionId = created.SessionId,
+            Rows =
+            [
+                ["A", "B", "C", "D", "E"],
+                ["1A", "1B", "1C", "1D", "1E"],
+                ["2A", "2B", "2C", "2D", "2E"],
+                ["3A", "3B", "3C", "3D", "3E"],
+                ["4A", "4B", "4C", "4D", "4E"]
+            ]
+        });
+
+        var response = Assert.IsType<Models.Responses.ApplyOperationsResponse>(result);
+        var table = Assert.Single(workflow.GetDocumentTables(response.SessionId).Tables);
+        Assert.Equal(created.SessionId, response.SessionId);
+        Assert.Equal(TableCapabilityPack.AppendTable, Assert.Single(response.Results).Type);
+        Assert.Equal(5, table.RowCount);
+        Assert.Equal(5, table.ColumnCount);
+    }
+
+    [SkippableFact]
+    public void FormatTableToolFormatsAllCellsCoveredByAnEditorSelection()
+    {
+        SkipIfTxLicenseIsMissing();
+        var artifactRoot = Path.Combine(
+            Path.GetTempPath(),
+            "tx-mcp-format-selected-table-cells-tests",
+            Guid.NewGuid().ToString("N"));
+        var workflow = CreateWorkflow(artifactRoot);
+        var created = ApplyOperationsOrSkipIfUnlicensed(workflow, new ApplyOperationsRequest
+        {
+            Operations =
+            [
+                new DocumentOperation
+                {
+                    Type = TableCapabilityPack.AppendTable,
+                    TableId = "95",
+                    Rows = [["Alpha", "Beta"], ["Gamma", "Delta"]]
+                }
+            ]
+        });
+        string txPath = Path.Combine(artifactRoot, "sessions", created.SessionId, "document.tx");
+        int selectionStart;
+        int selectionLength;
+        using (var tx = new ServerTextControl())
+        {
+            tx.Create();
+            tx.Load(txPath, StreamType.InternalUnicodeFormat);
+            var table = tx.Tables.GetItem(95);
+            var first = table.Cells.GetItem(1, 1);
+            var last = table.Cells.GetItem(1, 2);
+            selectionStart = first.Start - 1;
+            selectionLength = (last.Start - 1 + last.Length) - selectionStart;
+        }
+
+        object result = new TableTools(workflow).FormatTable(new FormatTableRequest
+        {
+            SessionId = created.SessionId,
+            Scope = "selectedCells",
+            MatchText = "Alpha",
+            NearTextPosition = selectionStart,
+            SelectionLength = selectionLength,
+            MatchCase = true,
+            BackgroundColorHex = "#FF0000"
+        });
+
+        var response = Assert.IsType<Models.Responses.ApplyOperationsResponse>(result);
+        var operation = Assert.Single(response.Results);
+        Assert.Equal(2, operation.Metadata["cellCount"]);
+        AssertTxTableCellBackColor(txPath, 95, 1, 1, "#FF0000");
+        AssertTxTableCellBackColor(txPath, 95, 1, 2, "#FF0000");
+    }
+
+    [SkippableFact]
+    public void FormatTableToolResolvesTheSelectedTableAndFormatsItsHeader()
+    {
+        SkipIfTxLicenseIsMissing();
+        var artifactRoot = Path.Combine(
+            Path.GetTempPath(),
+            "tx-mcp-format-selected-table-header-tests",
+            Guid.NewGuid().ToString("N"));
+        var workflow = CreateWorkflow(artifactRoot);
+        var created = ApplyOperationsOrSkipIfUnlicensed(workflow, new ApplyOperationsRequest
+        {
+            Operations =
+            [
+                new DocumentOperation
+                {
+                    Type = TableCapabilityPack.AppendTable,
+                    TableId = "96",
+                    Rows = [["First header", "Value"], ["First marker", "One"]]
+                },
+                new DocumentOperation
+                {
+                    Type = BasicTextCapabilityPack.AppendParagraph,
+                    Text = "Between tables"
+                },
+                new DocumentOperation
+                {
+                    Type = TableCapabilityPack.AppendTable,
+                    TableId = "97",
+                    Rows = [["Second header", "Value"], ["Second marker", "Two"]]
+                }
+            ]
+        });
+        var match = Assert.Single(workflow.SearchTextRanges(
+            created.SessionId,
+            "Second marker",
+            matchCase: true).Matches);
+
+        object result = new TableTools(workflow).FormatTable(new FormatTableRequest
+        {
+            SessionId = created.SessionId,
+            Scope = "header",
+            MatchText = "Second marker",
+            NearTextPosition = match.Start,
+            MatchCase = true,
+            BackgroundColorHex = "#008000"
+        });
+
+        var response = Assert.IsType<Models.Responses.ApplyOperationsResponse>(result);
+        var operation = Assert.Single(response.Results);
+        Assert.Equal("97", operation.Metadata["tableId"]);
+        Assert.Equal(2, operation.Metadata["cellCount"]);
+        string txPath = Path.Combine(artifactRoot, "sessions", created.SessionId, "document.tx");
+        AssertTxTableCellBackColor(txPath, 97, 1, 1, "#008000");
+        AssertTxTableCellBackColor(txPath, 97, 1, 2, "#008000");
+    }
+
+    [SkippableFact]
+    public void LiveTableInspectionCountsTablesAndAddsRowsToTheSecondTable()
+    {
+        SkipIfTxLicenseIsMissing();
+        var artifactRoot = Path.Combine(
+            Path.GetTempPath(),
+            "tx-mcp-live-table-inspection-tests",
+            Guid.NewGuid().ToString("N"));
+        var workflow = CreateWorkflow(artifactRoot);
+        var created = ApplyOperationsOrSkipIfUnlicensed(workflow, new ApplyOperationsRequest
+        {
+            Operations =
+            [
+                new DocumentOperation
+                {
+                    Type = TableCapabilityPack.AppendTable,
+                    TableId = "98",
+                    Rows = [["First", "Table"], ["A", "B"]]
+                },
+                new DocumentOperation
+                {
+                    Type = BasicTextCapabilityPack.AppendParagraph,
+                    Text = "Between tables"
+                },
+                new DocumentOperation
+                {
+                    Type = TableCapabilityPack.AppendTable,
+                    TableId = "99",
+                    Rows = [["Second", "Table"], ["C", "D"]]
+                }
+            ]
+        });
+
+        var exported = workflow.GetAsBase64(new GetAsBase64Request
+        {
+            SessionId = created.SessionId,
+            Format = "docx"
+        });
+        var imported = workflow.LoadFromBase64(new LoadFromBase64Request
+        {
+            Data = exported.Base64Document,
+            SourceFormat = "docx"
+        });
+
+        DocumentTablesResponse before = workflow.GetDocumentTables(imported.SessionId);
+        Assert.Equal(2, before.TableCount);
+        Assert.Equal([1, 2], before.Tables.Select(table => table.TableNumber));
+        Assert.All(before.Tables, table => Assert.Equal(2, table.RowCount));
+        Assert.Equal(2, workflow.GetDocumentStructure(imported.SessionId).TableCount);
+
+        object result = new TableTools(workflow).AddTableRows(new AddTableRowsRequest
+        {
+            SessionId = imported.SessionId,
+            TableNumber = 2,
+            Count = 5
+        });
+
+        var response = Assert.IsType<Models.Responses.ApplyOperationsResponse>(result);
+        Assert.Equal(5, response.Results.Count);
+        DocumentTablesResponse after = workflow.GetDocumentTables(imported.SessionId);
+        Assert.Equal(2, after.TableCount);
+        Assert.Equal(2, after.Tables[0].RowCount);
+        Assert.Equal(7, after.Tables[1].RowCount);
+    }
+
+    [SkippableFact]
+    public void InspectDocumentFocusesUploadedMarkdownAroundQuestionTerms()
+    {
+        SkipIfTxLicenseIsMissing();
+        var workflow = CreateWorkflow(Path.Combine(
+            Path.GetTempPath(),
+            "tx-mcp-inspect-tests",
+            Guid.NewGuid().ToString("N")));
+        string markdown = "# Services Agreement\n\nAgreement Date: September 4, 2026\n\n## Payment\n\nInvoices are due within 30 days.";
+        var loaded = workflow.LoadFromBase64(new LoadFromBase64Request
+        {
+            Data = Convert.ToBase64String(Encoding.UTF8.GetBytes(markdown)),
+            SourceFormat = "md"
+        });
+
+        var inspection = workflow.InspectDocument(new InspectDocumentRequest
+        {
+            SessionId = loaded.SessionId,
+            Query = "What is the given agreement date on this contract?",
+            ContextParagraphs = 0
+        });
+
+        Assert.True(inspection.MatchCount > 0);
+        Assert.Contains(inspection.Paragraphs, paragraph =>
+            paragraph.Text.Contains("September 4, 2026", StringComparison.Ordinal));
+    }
+
+    [SkippableFact]
+    public void InspectDocumentPagesEveryParagraphWithoutRepeatingContent()
+    {
+        SkipIfTxLicenseIsMissing();
+        var workflow = CreateWorkflow(Path.Combine(
+            Path.GetTempPath(),
+            "tx-mcp-inspect-paging-tests",
+            Guid.NewGuid().ToString("N")));
+        string markdown = string.Join(
+            "\n\n",
+            Enumerable.Range(0, 12).Select(index =>
+                $"Paragraph {index}: {new string((char)('a' + index), 280)}"));
+        var loaded = workflow.LoadFromBase64(new LoadFromBase64Request
+        {
+            Data = Convert.ToBase64String(Encoding.UTF8.GetBytes(markdown)),
+            SourceFormat = "md"
+        });
+
+        var indexes = new List<int>();
+        int start = 0;
+        int totalParagraphs = 0;
+        while (true)
+        {
+            DocumentInspectionResponse page = workflow.InspectDocument(new InspectDocumentRequest
+            {
+                SessionId = loaded.SessionId,
+                StartParagraphIndex = start,
+                ContextParagraphs = 0,
+                MaxCharacters = 1_000
+            });
+            totalParagraphs = page.TotalParagraphs;
+            Assert.Equal(page.Paragraphs.Sum(paragraph => paragraph.Text.Length), page.ReturnedCharacters);
+            indexes.AddRange(page.Paragraphs.Select(paragraph => paragraph.Index));
+            if (!page.Truncated)
+            {
+                Assert.Null(page.NextParagraphIndex);
+                break;
+            }
+
+            Assert.True(page.NextParagraphIndex > start);
+            start = page.NextParagraphIndex!.Value;
+        }
+
+        Assert.True(totalParagraphs >= 12);
+        Assert.Equal(Enumerable.Range(0, totalParagraphs), indexes);
+        Assert.Equal(indexes.Count, indexes.Distinct().Count());
+    }
+
+    [SkippableFact]
+    public void ClassifyDocumentReturnsLegalCategoryAndActionsWithoutMutatingDocument()
+    {
+        SkipIfTxLicenseIsMissing();
+        var workflow = CreateWorkflow(Path.Combine(
+            Path.GetTempPath(),
+            "tx-mcp-classification-tests",
+            Guid.NewGuid().ToString("N")));
+        string markdown = "# Mutual Nondisclosure Agreement\n\nThis agreement is between Party A and Party B. Confidential information is subject to warranty, liability, termination, and governing law clauses.";
+        var loaded = workflow.LoadFromBase64(new LoadFromBase64Request
+        {
+            Data = Convert.ToBase64String(Encoding.UTF8.GetBytes(markdown)),
+            SourceFormat = "md"
+        });
+
+        DocumentCategoryResponse category = workflow.ClassifyDocument(new ClassifyDocumentRequest
+        {
+            SessionId = loaded.SessionId
+        });
+
+        Assert.Equal("Legal", category.Category);
+        Assert.InRange(category.Confidence, 0.55, 1);
+        Assert.Contains(category.SuggestedActions, action => action.Id == "risk-assessment");
+        Assert.Contains(category.SuggestedActions, action => action.Id == "obligations");
+    }
+
+    [SkippableFact]
+    public void ClassifyDocumentReturnsTransportationCategoryAndActions()
+    {
+        SkipIfTxLicenseIsMissing();
+        var workflow = CreateWorkflow(Path.Combine(
+            Path.GetTempPath(),
+            "tx-mcp-transportation-classification-tests",
+            Guid.NewGuid().ToString("N")));
+        string markdown = "# Regional Freight Operations Plan\n\nThe transportation network coordinates fleet vehicles, carrier capacity, warehouse handoffs, shipment routes, cargo tracking, and final delivery milestones.";
+        var loaded = workflow.LoadFromBase64(new LoadFromBase64Request
+        {
+            Data = Convert.ToBase64String(Encoding.UTF8.GetBytes(markdown)),
+            SourceFormat = "md"
+        });
+
+        DocumentCategoryResponse category = workflow.ClassifyDocument(new ClassifyDocumentRequest
+        {
+            SessionId = loaded.SessionId
+        });
+
+        Assert.Equal("Transportation", category.Category);
+        Assert.Contains(category.SuggestedActions, action => action.Id == "shipment-status");
+        Assert.Contains(category.SuggestedActions, action => action.Id == "route-risks");
+    }
+
+    [SkippableFact]
+    public void ApplyDocumentPresetStylesMapsImportedMarkdownHierarchyAndPreservesContent()
+    {
+        SkipIfTxLicenseIsMissing();
+        var workflow = CreateWorkflow(Path.Combine(
+            Path.GetTempPath(),
+            "tx-mcp-imported-style-tests",
+            Guid.NewGuid().ToString("N")));
+        string markdown = "# Document Title\n\nIntro text.\n\n## First Heading\n\nBody paragraph.\n\n### Second Heading\n\n- Item one\n- Item two";
+        var loaded = workflow.LoadFromBase64(new LoadFromBase64Request
+        {
+            Data = Convert.ToBase64String(Encoding.UTF8.GetBytes(markdown)),
+            SourceFormat = "md"
+        });
+
+        ApplyDocumentPresetStylesResponse styled = workflow.ApplyDocumentPresetStyles(
+            new ApplyDocumentPresetStylesRequest { SessionId = loaded.SessionId });
+        DocumentInspectionResponse inspection = workflow.InspectDocument(
+            new InspectDocumentRequest { SessionId = loaded.SessionId });
+        DocumentExportResponse export = workflow.CreateDocumentExport(new CreateDocumentExportRequest
+        {
+            SessionId = loaded.SessionId,
+            Format = "tx"
+        });
+        var file = workflow.GetDocumentExport(export.SessionId, export.ExportId);
+
+        Assert.Equal(loaded.SessionId, styled.SessionId);
+        Assert.True(styled.PageLayoutApplied);
+        Assert.Equal(inspection.TotalParagraphs, styled.ParagraphsStyled);
+        Assert.Empty(styled.Warnings);
+        Assert.Contains(inspection.Paragraphs, paragraph => paragraph.Text == "Document Title" && paragraph.StyleName == "Title");
+        Assert.Contains(inspection.Paragraphs, paragraph => paragraph.Text == "Intro text." && paragraph.StyleName == "Body");
+        Assert.Contains(inspection.Paragraphs, paragraph => paragraph.Text == "First Heading" && paragraph.StyleName == "Heading");
+        Assert.Contains(inspection.Paragraphs, paragraph => paragraph.Text == "Second Heading" && paragraph.StyleName == "Heading2");
+        Assert.Contains(inspection.Paragraphs, paragraph => paragraph.Text.Contains("Item one", StringComparison.Ordinal));
+        Assert.DoesNotContain(inspection.Paragraphs, paragraph => paragraph.Text.Contains('#'));
+        AssertTxSectionLayout(
+            file.Path,
+            sectionIndex: 0,
+            expectedWidthTwips: 12240,
+            expectedHeightTwips: 15840,
+            expectedLeftMarginTwips: 1152,
+            expectedTopMarginTwips: 1080,
+            expectedLandscape: false);
+    }
+
+    [SkippableFact]
+    public void CreateDocumentFromMarkdownBuildsAndStylesInvoiceInOneEnginePass()
+    {
+        SkipIfTxLicenseIsMissing();
+        var workflow = CreateWorkflow(Path.Combine(
+            Path.GetTempPath(),
+            "tx-mcp-markdown-create-tests",
+            Guid.NewGuid().ToString("N")));
+        string markdown = """
+            # Invoice
+
+            ## Bill To
+
+            Contoso Ltd.
+
+            ## Line Items
+
+            | Description | Quantity | Price | Amount |
+            | --- | ---: | ---: | ---: |
+            | Consulting | 2 | $100.00 | $200.00 |
+            | Support | 1 | $50.00 | $50.00 |
+            | Hosting | 1 | $25.00 | $25.00 |
+
+            **Subtotal:** $275.00
+            **Tax:** $22.00
+            **Total:** $297.00
+
+            ### Payment Terms
+
+            Payment is due within 30 days.
+            """;
+
+        CreateDocumentFromMarkdownResponse created = workflow.CreateDocumentFromMarkdown(
+            new CreateDocumentFromMarkdownRequest { Markdown = markdown });
+        DocumentInspectionResponse inspection = workflow.InspectDocument(
+            new InspectDocumentRequest { SessionId = created.SessionId });
+        DocumentExportResponse export = workflow.CreateDocumentExport(new CreateDocumentExportRequest
+        {
+            SessionId = created.SessionId,
+            Format = "tx"
+        });
+        var file = workflow.GetDocumentExport(export.SessionId, export.ExportId);
+
+        Assert.NotEmpty(created.SessionId);
+        Assert.True(created.PageLayoutApplied);
+        Assert.Equal(1, created.TablesStyled);
+        Assert.Empty(created.Warnings);
+        Assert.Contains(inspection.Paragraphs, paragraph => paragraph.Text == "Invoice" && paragraph.StyleName == "Title");
+        Assert.Contains(inspection.Paragraphs, paragraph => paragraph.Text == "Bill To" && paragraph.StyleName == "Heading");
+        Assert.Contains(inspection.Paragraphs, paragraph => paragraph.Text == "Payment Terms" && paragraph.StyleName == "Heading2");
+
+        TxTextControlLicensing.Configure();
+        using var tx = new ServerTextControl();
+        tx.Create();
+        tx.Load(file.Path, StreamType.InternalUnicodeFormat);
+        TXTextControl.Table table = Assert.Single(tx.Tables.Cast<TXTextControl.Table>());
+        Assert.Equal("Description", table.Cells.GetItem(1, 1).Text);
+        Assert.Equal("$25.00", table.Cells.GetItem(4, 4).Text);
+        Assert.Equal(
+            ColorTranslator.FromHtml("#163A5F").ToArgb(),
+            table.Cells.GetItem(1, 1).CellFormat.BackColor.ToArgb());
+        table.Cells.GetItem(1, 1).Select();
+        Assert.True(tx.Selection.Bold);
+    }
+
+    [SkippableFact]
+    public void EditDocumentReplacesOneParagraphWithoutRecreatingItsSession()
+    {
+        SkipIfTxLicenseIsMissing();
+        var workflow = CreateWorkflow(Path.Combine(
+            Path.GetTempPath(),
+            "tx-mcp-edit-tests",
+            Guid.NewGuid().ToString("N")));
+        var created = ApplyOperationsOrSkipIfUnlicensed(workflow, new ApplyOperationsRequest
+        {
+            CreateIfMissing = true,
+            Operations =
+            [
+                new DocumentOperation { Type = BasicTextCapabilityPack.AppendParagraph, Text = "First paragraph" },
+                new DocumentOperation { Type = BasicTextCapabilityPack.AppendParagraph, Text = "Old payment paragraph" },
+                new DocumentOperation { Type = BasicTextCapabilityPack.AppendParagraph, Text = "Final paragraph" }
+            ]
+        });
+
+        var edited = workflow.EditDocument(new EditDocumentRequest
+        {
+            SessionId = created.SessionId,
+            ParagraphIndex = 1,
+            ReplacementText = "New payment paragraph"
+        });
+        var paragraphs = workflow.InspectDocument(new InspectDocumentRequest
+        {
+            SessionId = created.SessionId
+        }).Paragraphs;
+
+        Assert.Equal(created.SessionId, edited.SessionId);
+        Assert.Equal("paragraph", edited.TargetKind);
+        Assert.Equal(1, edited.EditsApplied);
+        Assert.Contains(paragraphs, paragraph => paragraph.Text.Contains("First paragraph", StringComparison.Ordinal));
+        Assert.Contains(paragraphs, paragraph => paragraph.Text.Contains("New payment paragraph", StringComparison.Ordinal));
+        Assert.Contains(paragraphs, paragraph => paragraph.Text.Contains("Final paragraph", StringComparison.Ordinal));
+        Assert.DoesNotContain(paragraphs, paragraph => paragraph.Text.Contains("Old payment paragraph", StringComparison.Ordinal));
+    }
+
+    [SkippableFact]
+    public void EditDocumentRejectsAStaleCharacterRangeAndReportsVerifiedSuccess()
+    {
+        SkipIfTxLicenseIsMissing();
+        var workflow = CreateWorkflow(Path.Combine(
+            Path.GetTempPath(),
+            "tx-mcp-stale-range-tests",
+            Guid.NewGuid().ToString("N")));
+        var created = ApplyOperationsOrSkipIfUnlicensed(workflow, new ApplyOperationsRequest
+        {
+            CreateIfMissing = true,
+            Operations =
+            [
+                new DocumentOperation { Type = BasicTextCapabilityPack.AppendParagraph, Text = "Term and survival" },
+                new DocumentOperation { Type = BasicTextCapabilityPack.AppendParagraph, Text = "Unrelated paragraph" }
+            ]
+        });
+        string text = workflow.GetText(created.SessionId).Text;
+        int start = text.IndexOf("Term and survival", StringComparison.Ordinal);
+        Assert.True(start >= 0);
+
+        var stale = Assert.Throws<InvalidOperationException>(() => workflow.EditDocument(new EditDocumentRequest
+        {
+            SessionId = created.SessionId,
+            Start = start,
+            Length = "Term and survival".Length,
+            ExpectedText = "Different text",
+            ReplacementText = "Sample paragraph"
+        }));
+        Assert.Contains("expectedText", stale.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Term and survival", workflow.GetText(created.SessionId).Text, StringComparison.Ordinal);
+
+        var edited = workflow.EditDocument(new EditDocumentRequest
+        {
+            SessionId = created.SessionId,
+            Start = start,
+            Length = "Term and survival".Length,
+            ExpectedText = "Term and survival",
+            ReplacementText = "Sample paragraph"
+        });
+
+        Assert.True(edited.Changed);
+        Assert.Equal(1, edited.EditsApplied);
+        Assert.True(edited.Revision > 0);
+        Assert.Contains("Sample paragraph", workflow.GetText(created.SessionId).Text, StringComparison.Ordinal);
+    }
+
+    [SkippableFact]
+    public void ConvertDocumentUsesDirectMarkdownToDocxPathAndReturnsDownloadArtifact()
+    {
+        SkipIfTxLicenseIsMissing();
+        var workflow = CreateWorkflow(Path.Combine(
+            Path.GetTempPath(),
+            "tx-mcp-convert-tests",
+            Guid.NewGuid().ToString("N")));
+        string markdown = "# Conversion Test\n\nThis content must remain unchanged.";
+
+        var export = workflow.ConvertDocument(new ConvertDocumentRequest
+        {
+            Data = Convert.ToBase64String(Encoding.UTF8.GetBytes(markdown)),
+            SourceFormat = "md",
+            OutputFormat = "docx",
+            FileName = "converted.docx"
+        });
+        var file = workflow.GetDocumentExport(export.SessionId, export.ExportId);
+
+        Assert.Equal("docx", export.Format);
+        Assert.Equal("converted.docx", export.FileName);
+        Assert.True(export.ByteCount > 0);
+        AssertDocxContainsText(file.Path, "Conversion Test");
+        AssertDocxContainsText(file.Path, "This content must remain unchanged.");
+    }
+
+    [SkippableFact]
+    public void EmptyDocumentReceivesConfiguredDefaultPageLayoutImmediately()
+    {
+        SkipIfTxLicenseIsMissing();
+        var workflow = CreateWorkflow(Path.Combine(
+            Path.GetTempPath(),
+            "tx-mcp-default-layout-tests",
+            Guid.NewGuid().ToString("N")));
+
+        var created = workflow.CreateDocument();
+        var model = workflow.GetDocumentModel(created.SessionId).Document;
+
+        Assert.Equal("Letter", Assert.Single(model.Sections).PageLayout?.PageSize);
+        Assert.Equal(57.6f, model.Sections[0].PageLayout?.MarginLeft);
+    }
+
+    [SkippableFact]
+    public void CreateDocumentExportWritesPdfWithoutBase64()
+    {
+        SkipIfTxLicenseIsMissing();
+        string artifactRoot = Path.Combine(
+            Path.GetTempPath(),
+            "tx-mcp-export-tests",
+            Guid.NewGuid().ToString("N"));
+        var workflow = CreateWorkflow(artifactRoot);
+        var session = workflow.CreateDocument();
+
+        var export = workflow.CreateDocumentExport(new CreateDocumentExportRequest
+        {
+            SessionId = session.SessionId,
+            Format = "pdf",
+            FileName = "streamed-export.pdf"
+        });
+        var file = workflow.GetDocumentExport(session.SessionId, export.ExportId);
+
+        Assert.Equal("application/pdf", file.MimeType);
+        Assert.Equal(new byte[] { 0x25, 0x50, 0x44, 0x46 }, File.ReadAllBytes(file.Path)[..4]);
+        Assert.Equal(new FileInfo(file.Path).Length, export.ByteCount);
+    }
+
+    [SkippableFact]
+    public void CreateDocumentExportUsesDocumentTitleForDefaultFileName()
+    {
+        SkipIfTxLicenseIsMissing();
+        string artifactRoot = Path.Combine(
+            Path.GetTempPath(),
+            "tx-mcp-titled-export-tests",
+            Guid.NewGuid().ToString("N"));
+        var workflow = CreateWorkflow(artifactRoot);
+        var rendered = RenderDocumentModelOrSkipIfUnlicensed(workflow, new RenderDocumentModelRequest
+        {
+            CreateIfMissing = true,
+            Document = new Neutral.Document
+            {
+                Title = "Product Launch Review - Meeting Agenda",
+                Sections = [new Neutral.Section()]
+            }
+        });
+
+        var export = workflow.CreateDocumentExport(new CreateDocumentExportRequest
+        {
+            SessionId = rendered.SessionId,
+            Format = "pdf"
+        });
+
+        Assert.Equal("Product Launch Review - Meeting Agenda.pdf", export.FileName);
+    }
+
+    [SkippableFact]
+    public void LoadFromBase64ImportsPdfContent()
+    {
+        SkipIfTxLicenseIsMissing();
+        var workflow = CreateWorkflow(Path.Combine(
+            Path.GetTempPath(),
+            "tx-mcp-pdf-import-tests",
+            Guid.NewGuid().ToString("N")));
+        var source = ApplyOperationsOrSkipIfUnlicensed(workflow, new ApplyOperationsRequest
+        {
+            CreateIfMissing = true,
+            Operations =
+            [
+                new DocumentOperation
+                {
+                    Type = BasicTextCapabilityPack.AppendParagraph,
+                    Text = "PDF upload integration test"
+                }
+            ]
+        });
+        var pdf = workflow.GetAsBase64(new GetAsBase64Request
+        {
+            SessionId = source.SessionId,
+            Format = "pdf"
+        });
+
+        var imported = workflow.LoadFromBase64(new LoadFromBase64Request
+        {
+            Data = pdf.Base64Document
+        });
+
+        Assert.Contains("PDF upload integration test", workflow.GetText(imported.SessionId).Text);
+    }
+
+    [SkippableFact]
+    public void LoadingIdenticalContentIntoTheSameSessionDoesNotRewriteArtifacts()
+    {
+        SkipIfTxLicenseIsMissing();
+        string artifactRoot = Path.Combine(
+            Path.GetTempPath(),
+            "tx-mcp-identical-import-tests",
+            Guid.NewGuid().ToString("N"));
+        var workflow = CreateWorkflow(artifactRoot);
+        var source = ApplyOperationsOrSkipIfUnlicensed(workflow, new ApplyOperationsRequest
+        {
+            CreateIfMissing = true,
+            Operations =
+            [
+                new DocumentOperation
+                {
+                    Type = BasicTextCapabilityPack.AppendParagraph,
+                    Text = "Identical upload performance test"
+                }
+            ]
+        });
+        var exported = workflow.GetAsBase64(new GetAsBase64Request
+        {
+            SessionId = source.SessionId,
+            Format = "pdf"
+        });
+        var imported = workflow.LoadFromBase64(new LoadFromBase64Request
+        {
+            Data = exported.Base64Document
+        });
+
+        string sessionDirectory = Path.Combine(artifactRoot, "sessions", imported.SessionId);
+        string documentPath = Path.Combine(sessionDirectory, "document.tx");
+        string statePath = Path.Combine(sessionDirectory, "document.state.json");
+        DateTime marker = new(2024, 1, 2, 3, 4, 5, DateTimeKind.Utc);
+        File.SetLastWriteTimeUtc(documentPath, marker);
+        File.SetLastWriteTimeUtc(statePath, marker);
+
+        var repeated = workflow.LoadFromBase64(
+            new LoadFromBase64Request { Data = exported.Base64Document },
+            imported.SessionId);
+
+        Assert.Equal(imported.SessionId, repeated.SessionId);
+        Assert.Equal(marker, File.GetLastWriteTimeUtc(documentPath));
+        Assert.Equal(marker, File.GetLastWriteTimeUtc(statePath));
+        string importedText = workflow.GetText(imported.SessionId).Text;
+        Assert.Contains("Identical upload performance", importedText);
+        Assert.Contains("test", importedText);
+    }
+
     [SkippableFact]
     public void ApplyOperationsCreatesAndStoresActualDocuments()
     {
@@ -323,6 +1173,108 @@ public sealed class DocumentCreationIntegrationTests
     }
 
     [SkippableFact]
+    public void RenderDocumentModelRepairsWeakInvoiceAndExportsProfessionalPdf()
+    {
+        SkipIfTxLicenseIsMissing();
+
+        var artifactRoot = GetArtifactRoot();
+        var workflow = CreateWorkflow(artifactRoot);
+        DocumentBlock Paragraph(string text) => new()
+        {
+            Type = "paragraph",
+            Paragraph = new Neutral.Paragraph { Text = text }
+        };
+
+        var response = RenderDocumentModelOrSkipIfUnlicensed(
+            workflow,
+            new RenderDocumentModelRequest
+            {
+                CreateIfMissing = true,
+                Document = new Document
+                {
+                    Title = "INVOICE",
+                    Sections =
+                    [
+                        new Neutral.Section
+                        {
+                            Blocks =
+                            [
+                                Paragraph("Invoice Number: INV-2026-1042"),
+                                Paragraph("Date: September 4, 2026"),
+                                Paragraph("Due Date: October 4, 2026"),
+                                Paragraph("Bill To: Northwind Traders"),
+                                new DocumentBlock
+                                {
+                                    Type = "table",
+                                    Table = new Neutral.Table
+                                    {
+                                        Rows =
+                                        [
+                                            new Neutral.TableRow
+                                            {
+                                                Cells =
+                                                [
+                                                    CreateTextCell("header-description", "Description"),
+                                                    CreateTextCell("header-quantity", "Quantity"),
+                                                    CreateTextCell("header-price", "Unit Price"),
+                                                    CreateTextCell("header-amount", "Amount")
+                                                ]
+                                            }
+                                        ]
+                                    }
+                                },
+                                Paragraph("Professional Consulting Services | 40 | $150.00 | $6,000.00"),
+                                Paragraph("Implementation Support | 12 | $125.00 | $1,500.00"),
+                                Paragraph("Team Training | 4 | $100.00 | $400.00"),
+                                Paragraph("Subtotal: $7,900.00"),
+                                Paragraph("Tax (8%): $632.00"),
+                                Paragraph("Total: $8,532.00"),
+                                Paragraph("Payment Terms: Payment is due within 30 days. Thank you for your business.")
+                            ]
+                        }
+                    ]
+                }
+            });
+
+        Assert.Contains(response.Warnings, warning => warning.Contains("Recovered 3", StringComparison.Ordinal));
+        var model = workflow.GetDocumentModel(response.SessionId).Document;
+        var table = Assert.Single(model.Sections[0].Blocks, block => block.Table is not null).Table!;
+        Assert.Equal(4, table.Rows.Count);
+        Assert.Equal(4, table.ColumnWidths.Count);
+        Assert.InRange(table.ColumnWidths.Sum(width => width ?? 0), 496.5f, 497.1f);
+        Assert.True(table.ColumnWidths[0] > 250);
+        Assert.Equal("right", table.Rows[1].Cells[3].CellStyle?.HorizontalAlignment);
+        Assert.Contains(model.Sections[0].Blocks, block =>
+            block.Paragraph?.StyleName == "Heading2"
+            && string.Concat(block.Paragraph.Runs.Select(run => run.Text)) == "Payment Terms");
+
+        var txPath = Path.Combine(artifactRoot, "sessions", response.SessionId, "document.tx");
+        AssertTxTableCellPadding(txPath, 10, 1, 1, left: 120, right: 120, top: 100, bottom: 100);
+        AssertTxTableCellParagraphAlignment(txPath, 10, 2, 4, HorizontalAlignment.Right);
+
+        var pdf = workflow.GetAsBase64(new GetAsBase64Request
+        {
+            SessionId = response.SessionId,
+            Format = "pdf"
+        });
+        var pdfPath = Path.Combine(artifactRoot, "professional-invoice-regression.pdf");
+        File.WriteAllBytes(pdfPath, Convert.FromBase64String(pdf.Base64Document));
+        Assert.True(new FileInfo(pdfPath).Length > 5_000, $"Expected a non-empty styled PDF at {pdfPath}.");
+
+        var docx = workflow.GetAsBase64(new GetAsBase64Request
+        {
+            SessionId = response.SessionId,
+            Format = "docx"
+        });
+        var docxPath = Path.Combine(artifactRoot, "professional-invoice-regression.docx");
+        File.WriteAllBytes(docxPath, Convert.FromBase64String(docx.Base64Document));
+        AssertDocxContainsTableText(
+            docxPath,
+            ["Description", "Professional Consulting Services", "Implementation Support", "Team Training"]);
+        AssertDocxTableRowCount(docxPath, 4);
+    }
+
+    [SkippableFact]
     public void DocumentInspectionToolsReturnModelAwareSummaries()
     {
         SkipIfTxLicenseIsMissing();
@@ -565,6 +1517,132 @@ public sealed class DocumentCreationIntegrationTests
         AssertDocxHasBoldRun(docxPath, "jon");
         AssertDocxHasBoldRun(docxPath, "Jon");
         AssertDocxContainsText(docxPath, "jonathan");
+    }
+
+    [SkippableFact]
+    public void FormatTextRangeAttachesSelectionBeforeApplyingCharacterFormatting()
+    {
+        SkipIfTxLicenseIsMissing();
+
+        var artifactRoot = GetArtifactRoot();
+        var workflow = CreateWorkflow(artifactRoot);
+        var response = ApplyOperationsOrSkipIfUnlicensed(workflow, new ApplyOperationsRequest
+        {
+            CreateIfMissing = true,
+            Operations =
+            [
+                new DocumentOperation
+                {
+                    Type = BasicTextCapabilityPack.AppendParagraph,
+                    Text = "untouched prefix"
+                },
+                new DocumentOperation
+                {
+                    Type = BasicTextCapabilityPack.AppendParagraph,
+                    Text = "confidential information remains protected"
+                }
+            ]
+        });
+
+        var match = Assert.Single(workflow.SearchTextRanges(
+            response.SessionId,
+            "information",
+            matchCase: true,
+            wholeWord: true).Matches);
+
+        workflow.FormatText(response.SessionId, new FormatTextRequest
+        {
+            Start = match.Start,
+            Length = match.Length,
+            Bold = true,
+            ColorHex = "#008000"
+        });
+
+        string txPath = Path.Combine(artifactRoot, "sessions", response.SessionId, "document.tx");
+        AssertTxTextFormat(txPath, "information", expectedBold: true, expectedHex: "#008000");
+        AssertTxTextFormat(txPath, "untouched prefix", expectedBold: false, expectedHex: "#1F2937");
+    }
+
+    [SkippableFact]
+    public void FormatTextRejectsARequestWithNoCharacterFormattingProperties()
+    {
+        SkipIfTxLicenseIsMissing();
+
+        var artifactRoot = GetArtifactRoot();
+        var workflow = CreateWorkflow(artifactRoot);
+        var response = ApplyOperationsOrSkipIfUnlicensed(workflow, new ApplyOperationsRequest
+        {
+            CreateIfMissing = true,
+            Operations =
+            [
+                new DocumentOperation
+                {
+                    Type = BasicTextCapabilityPack.AppendParagraph,
+                    Text = "Paragraph"
+                }
+            ]
+        });
+
+        var exception = Assert.Throws<ArgumentException>(() =>
+            workflow.FormatText(response.SessionId, new FormatTextRequest { ParagraphIndex = 0 }));
+
+        Assert.Contains("format_paragraph", exception.Message, StringComparison.Ordinal);
+    }
+
+    [SkippableFact]
+    public void FormatTextOccurrencesFormatsEveryServerMatchInOneOperation()
+    {
+        SkipIfTxLicenseIsMissing();
+
+        var artifactRoot = GetArtifactRoot();
+        var workflow = CreateWorkflow(artifactRoot);
+        var response = ApplyOperationsOrSkipIfUnlicensed(workflow, new ApplyOperationsRequest
+        {
+            CreateIfMissing = true,
+            Operations =
+            [
+                new DocumentOperation
+                {
+                    Type = BasicTextCapabilityPack.AppendParagraph,
+                    Text = "untouched heading"
+                },
+                new DocumentOperation
+                {
+                    Type = BasicTextCapabilityPack.AppendParagraph,
+                    Text = "information and Information, but informational stays unchanged"
+                },
+                new DocumentOperation
+                {
+                    Type = TableCapabilityPack.AppendTable,
+                    TableId = "92",
+                    Rows = [["Label", "information"]]
+                },
+                new DocumentOperation
+                {
+                    Type = BasicTextCapabilityPack.FormatTextOccurrences,
+                    MatchText = "information",
+                    WholeWord = true,
+                    Style = new TextStyleDefinition
+                    {
+                        Bold = true,
+                        ColorHex = "#008000"
+                    }
+                }
+            ]
+        });
+
+        var result = response.Results.Last();
+        Assert.Equal(3, Convert.ToInt32(result.Metadata["occurrenceCount"]));
+        string txPath = Path.Combine(artifactRoot, "sessions", response.SessionId, "document.tx");
+        AssertTxAllTextMatchesFormat(
+            txPath,
+            "information",
+            wholeWord: true,
+            expectedCount: 3,
+            expectedBold: true,
+            expectedHex: "#008000");
+        AssertTxTextFormat(txPath, "untouched heading", expectedBold: false, expectedHex: "#1F2937");
+        AssertTxTextFormat(txPath, "informational", expectedBold: false, expectedHex: "#1F2937");
     }
 
     [SkippableFact]
@@ -850,9 +1928,9 @@ public sealed class DocumentCreationIntegrationTests
         var sessionRoot = Path.Combine(artifactRoot, "sessions", response.SessionId);
         var txPath = Path.Combine(sessionRoot, "document.tx");
 
-        AssertTxTableCellBackColor(txPath, 15, 1, 1, "#1F4E79");
+        AssertTxTableCellBackColor(txPath, 15, 1, 1, "#163A5F");
         AssertTxTableCellBackColor(txPath, 15, 2, 1, "#FFFFFF");
-        AssertTxTableCellBackColor(txPath, 15, 3, 1, "#F8FAFC");
+        AssertTxTableCellBackColor(txPath, 15, 3, 1, "#F4F7FA");
         AssertTxTableCellBorders(txPath, 15, 1, 1, 10, "#D0D5DD");
         AssertTxTableCellBorders(txPath, 15, 3, 2, 10, "#D0D5DD");
         AssertTxTableCellTextFormat(txPath, 15, 1, 1, expectedFontSize: 200, expectedHex: "#FFFFFF", expectedBold: true);
@@ -861,9 +1939,9 @@ public sealed class DocumentCreationIntegrationTests
         var modelTable = workflow.GetDocumentModel(response.SessionId).Document.Sections[0].Blocks[0].Table;
         Assert.NotNull(modelTable);
         Assert.All(modelTable!.Rows[0].Cells, cell => Assert.True(cell.Blocks[0].Paragraph?.Runs[0].Style?.Bold));
-        Assert.All(modelTable.Rows[0].Cells, cell => Assert.Equal("#1F4E79", cell.CellStyle?.BackgroundColorHex));
+        Assert.All(modelTable.Rows[0].Cells, cell => Assert.Equal("#163A5F", cell.CellStyle?.BackgroundColorHex));
         Assert.All(modelTable.Rows[1].Cells, cell => Assert.Equal("#FFFFFF", cell.CellStyle?.BackgroundColorHex));
-        Assert.All(modelTable.Rows[2].Cells, cell => Assert.Equal("#F8FAFC", cell.CellStyle?.BackgroundColorHex));
+        Assert.All(modelTable.Rows[2].Cells, cell => Assert.Equal("#F4F7FA", cell.CellStyle?.BackgroundColorHex));
     }
 
     [SkippableFact]
@@ -1029,6 +2107,326 @@ public sealed class DocumentCreationIntegrationTests
         AssertDocxContainsText(docxPath, "MERGEFIELD");
         AssertDocxContainsText(docxPath, "ProductName");
         AssertDocxContainsText(docxPath, "Product Name");
+    }
+
+    [SkippableFact]
+    public void MergeFieldsCanReplaceEveryMatchingPartyNameWithRealFields()
+    {
+        SkipIfTxLicenseIsMissing();
+        var artifactRoot = GetArtifactRoot();
+        var workflow = CreateWorkflow(artifactRoot);
+        var created = ApplyOperationsOrSkipIfUnlicensed(workflow, new ApplyOperationsRequest
+        {
+            CreateIfMissing = true,
+            Operations =
+            [
+                new DocumentOperation
+                {
+                    Type = BasicTextCapabilityPack.AppendParagraph,
+                    Text = "Party A discloses information to Party A affiliates."
+                }
+            ]
+        });
+
+        var changed = ApplyOperationsOrSkipIfUnlicensed(workflow, new ApplyOperationsRequest
+        {
+            SessionId = created.SessionId,
+            Operations =
+            [
+                new DocumentOperation
+                {
+                    Type = FieldsCapabilityPack.AppendMergeField,
+                    FieldName = "PartyAName",
+                    FieldText = "Party A",
+                    MatchText = "Party A",
+                    ReplaceAll = true,
+                    MatchCase = true,
+                    WholeWord = true
+                }
+            ]
+        });
+
+        var result = Assert.Single(changed.Results);
+        Assert.Equal(2, Convert.ToInt32(result.Metadata["insertedFieldCount"]));
+        Assert.Equal(2, workflow.GetTemplateMergeFields(created.SessionId).FieldCount);
+        Assert.All(workflow.GetTemplateMergeFields(created.SessionId).Fields,
+            field => Assert.Equal("PartyAName", field.Name));
+        Assert.DoesNotContain("{{", workflow.GetText(created.SessionId).Text);
+        Assert.Contains("Party A discloses information to Party A affiliates.", workflow.GetText(created.SessionId).Text);
+
+        var txPath = Path.Combine(artifactRoot, "sessions", created.SessionId, "document.tx");
+        AssertTxApplicationFieldCount(txPath, 2);
+    }
+
+    [SkippableFact]
+    public void FocusedInsertMergeFieldToolDoesNotRequireAnOperationDiscriminator()
+    {
+        SkipIfTxLicenseIsMissing();
+        var artifactRoot = GetArtifactRoot();
+        var workflow = CreateWorkflow(artifactRoot);
+        var created = ApplyOperationsOrSkipIfUnlicensed(workflow, new ApplyOperationsRequest
+        {
+            CreateIfMissing = true,
+            Operations = [new DocumentOperation { Type = BasicTextCapabilityPack.AppendParagraph, Text = "Party B accepts." }]
+        });
+
+        object raw = new FieldTools(workflow).InsertMergeField(new InsertMergeFieldRequest
+        {
+            SessionId = created.SessionId,
+            FieldName = "PartyBName",
+            FieldText = "Party B",
+            MatchText = "Party B",
+            ReplaceAll = true
+        });
+
+        var result = Assert.IsType<ApplyOperationsResponse>(raw);
+        Assert.Equal(created.SessionId, result.SessionId);
+        Assert.Equal(1, workflow.GetTemplateMergeFields(created.SessionId).FieldCount);
+        AssertTxMergeField(
+            Path.Combine(artifactRoot, "sessions", created.SessionId, "document.tx"),
+            "PartyBName",
+            "Party B");
+    }
+
+    [SkippableFact]
+    public void MergeFieldCanReplaceAnExpectedCharacterRange()
+    {
+        SkipIfTxLicenseIsMissing();
+        var artifactRoot = GetArtifactRoot();
+        var workflow = CreateWorkflow(artifactRoot);
+        var created = ApplyOperationsOrSkipIfUnlicensed(workflow, new ApplyOperationsRequest
+        {
+            CreateIfMissing = true,
+            Operations = [new DocumentOperation { Type = BasicTextCapabilityPack.AppendParagraph, Text = "Agreement between Acme Corporation and Buyer." }]
+        });
+        string text = workflow.GetText(created.SessionId).Text;
+        int start = text.IndexOf("Acme Corporation", StringComparison.Ordinal);
+
+        ApplyOperationsOrSkipIfUnlicensed(workflow, new ApplyOperationsRequest
+        {
+            SessionId = created.SessionId,
+            Operations =
+            [
+                new DocumentOperation
+                {
+                    Type = FieldsCapabilityPack.AppendMergeField,
+                    FieldName = "PartyAName",
+                    FieldText = "Party A",
+                    Start = start,
+                    Length = "Acme Corporation".Length,
+                    ExpectedText = "Acme Corporation"
+                }
+            ]
+        });
+
+        Assert.Contains("Agreement between Party A and Buyer.", workflow.GetText(created.SessionId).Text);
+        AssertTxMergeField(Path.Combine(artifactRoot, "sessions", created.SessionId, "document.tx"), "PartyAName", "Party A");
+    }
+
+    [SkippableFact]
+    public void SearchRangeCanInsertMergeFieldIntoTableTextWithoutCoordinateDrift()
+    {
+        SkipIfTxLicenseIsMissing();
+        var artifactRoot = GetArtifactRoot();
+        var workflow = CreateWorkflow(artifactRoot);
+        const string selectedText = "Riverbend Technologies GmbH";
+        var created = ApplyOperationsOrSkipIfUnlicensed(workflow, new ApplyOperationsRequest
+        {
+            CreateIfMissing = true,
+            Operations =
+            [
+                new DocumentOperation
+                {
+                    Type = TableCapabilityPack.AppendTable,
+                    TableId = "72",
+                    Rows =
+                    [
+                        ["Party A", "Northstar Innovations, Inc., a Delaware corporation"],
+                        ["Party B", selectedText + ", a German limited liability company"],
+                        ["Effective date", "1 September 2026"]
+                    ]
+                }
+            ]
+        });
+
+        var range = Assert.Single(workflow.SearchTextRanges(
+            created.SessionId,
+            selectedText,
+            matchCase: true,
+            wholeWord: false).Matches);
+        ApplyOperationsOrSkipIfUnlicensed(workflow, new ApplyOperationsRequest
+        {
+            SessionId = created.SessionId,
+            Operations =
+            [
+                new DocumentOperation
+                {
+                    Type = FieldsCapabilityPack.AppendMergeField,
+                    FieldName = "PartyBName",
+                    FieldText = selectedText,
+                    Start = range.Start,
+                    Length = range.Length,
+                    ExpectedText = selectedText
+                }
+            ]
+        });
+
+        string txPath = Path.Combine(artifactRoot, "sessions", created.SessionId, "document.tx");
+        AssertTxMergeField(txPath, "PartyBName", selectedText);
+        AssertTxTableCell(txPath, 72, 2, 2, selectedText + ", a German limited liability company");
+    }
+
+    [SkippableFact]
+    public void NearTextPositionResolvesTheClosestServerSideMatch()
+    {
+        SkipIfTxLicenseIsMissing();
+        var artifactRoot = GetArtifactRoot();
+        var workflow = CreateWorkflow(artifactRoot);
+        var created = ApplyOperationsOrSkipIfUnlicensed(workflow, new ApplyOperationsRequest
+        {
+            CreateIfMissing = true,
+            Operations =
+            [
+                new DocumentOperation
+                {
+                    Type = TableCapabilityPack.AppendTable,
+                    TableId = "73",
+                    Rows = [["Party A", "Company"], ["Party B", "Company"]]
+                }
+            ]
+        });
+        var matches = workflow.SearchTextRanges(created.SessionId, "Company", matchCase: true).Matches;
+        Assert.Equal(2, matches.Count);
+
+        var changed = ApplyOperationsOrSkipIfUnlicensed(workflow, new ApplyOperationsRequest
+        {
+            SessionId = created.SessionId,
+            Operations =
+            [
+                new DocumentOperation
+                {
+                    Type = FieldsCapabilityPack.AppendMergeField,
+                    FieldName = "PartyBName",
+                    FieldText = "Company",
+                    MatchText = "Company",
+                    MatchCase = true,
+                    NearTextPosition = matches[1].Start + 6
+                }
+            ]
+        });
+
+        var result = Assert.Single(changed.Results);
+        var ranges = Assert.IsType<List<Dictionary<string, object?>>>(result.Metadata["ranges"]);
+        Assert.Equal(matches[1].Start, Convert.ToInt32(Assert.Single(ranges)["start"]));
+        Assert.Equal(1, workflow.GetTemplateMergeFields(created.SessionId).FieldCount);
+    }
+
+    [SkippableFact]
+    public void MergeFieldsCanBeInsertedUpdatedAndInspectedInHeaders()
+    {
+        SkipIfTxLicenseIsMissing();
+        var artifactRoot = GetArtifactRoot();
+        var workflow = CreateWorkflow(artifactRoot);
+        var created = ApplyOperationsOrSkipIfUnlicensed(workflow, new ApplyOperationsRequest
+        {
+            CreateIfMissing = true,
+            Operations =
+            [
+                new DocumentOperation { Type = BasicTextCapabilityPack.AppendParagraph, Text = "Agreement" },
+                new DocumentOperation { Type = HeaderFooterCapabilityPack.SetHeaderFooter, HeaderFooterType = "header", Text = "Prepared for " },
+                new DocumentOperation
+                {
+                    Type = FieldsCapabilityPack.AppendMergeField,
+                    FieldName = "CustomerName",
+                    FieldText = "Customer",
+                    HeaderFooterType = "header",
+                    Placement = "end"
+                },
+                new DocumentOperation
+                {
+                    Type = FieldsCapabilityPack.UpdateMergeField,
+                    FieldName = "CustomerName",
+                    FieldText = "Customer Name"
+                }
+            ]
+        });
+
+        var field = Assert.Single(workflow.GetTemplateMergeFields(created.SessionId).Fields);
+        Assert.Equal("sections[0].header", field.Location);
+        Assert.Equal("Customer Name", field.Text);
+        AssertTxHeaderFooterMergeField(
+            Path.Combine(artifactRoot, "sessions", created.SessionId, "document.tx"),
+            HeaderFooterType.Header,
+            "CustomerName",
+            "Customer Name");
+    }
+
+    [SkippableFact]
+    public void FormFieldsCanReplaceEveryMatchingPlaceholder()
+    {
+        SkipIfTxLicenseIsMissing();
+        var artifactRoot = GetArtifactRoot();
+        var workflow = CreateWorkflow(artifactRoot);
+        var created = ApplyOperationsOrSkipIfUnlicensed(workflow, new ApplyOperationsRequest
+        {
+            CreateIfMissing = true,
+            Operations = [new DocumentOperation { Type = BasicTextCapabilityPack.AppendParagraph, Text = "Sign here and initial here." }]
+        });
+
+        ApplyOperationsOrSkipIfUnlicensed(workflow, new ApplyOperationsRequest
+        {
+            SessionId = created.SessionId,
+            Operations =
+            [
+                new DocumentOperation
+                {
+                    Type = FieldsCapabilityPack.AppendFormField,
+                    FieldName = "Signer",
+                    FormFieldType = "text",
+                    Text = "here",
+                    MatchText = "here",
+                    ReplaceAll = true,
+                    MatchCase = true,
+                    WholeWord = true
+                }
+            ]
+        });
+
+        var fields = workflow.GetTemplateFormFields(created.SessionId);
+        Assert.Equal(2, fields.FieldCount);
+        Assert.All(fields.Fields, field => Assert.Equal("Signer", field.Name));
+    }
+
+    [SkippableFact]
+    public void MergeBlockCanWrapAnExpectedCharacterRange()
+    {
+        SkipIfTxLicenseIsMissing();
+        var artifactRoot = GetArtifactRoot();
+        var workflow = CreateWorkflow(artifactRoot);
+        var created = ApplyOperationsOrSkipIfUnlicensed(workflow, new ApplyOperationsRequest
+        {
+            CreateIfMissing = true,
+            Operations = [new DocumentOperation { Type = BasicTextCapabilityPack.AppendParagraph, Text = "Repeat this clause." }]
+        });
+        int start = workflow.GetText(created.SessionId).Text.IndexOf("this clause", StringComparison.Ordinal);
+
+        ApplyOperationsOrSkipIfUnlicensed(workflow, new ApplyOperationsRequest
+        {
+            SessionId = created.SessionId,
+            Operations =
+            [
+                new DocumentOperation
+                {
+                    Type = FieldsCapabilityPack.AppendMergeBlock,
+                    BlockName = "Clauses",
+                    Start = start,
+                    Length = "this clause".Length,
+                    ExpectedText = "this clause"
+                }
+            ]
+        });
+
+        AssertTxMergeBlock(Path.Combine(artifactRoot, "sessions", created.SessionId, "document.tx"), "Clauses");
     }
 
     [SkippableFact]
@@ -1277,16 +2675,18 @@ public sealed class DocumentCreationIntegrationTests
         var sessionRoot = Path.Combine(artifactRoot, "sessions", response.SessionId);
         var txPath = Path.Combine(sessionRoot, "document.tx");
 
-        AssertTxParagraphSpacing(txPath, collectionIndex: 1, expectedSpaceAfterTwips: 240);
-        AssertTxParagraphSpacing(txPath, collectionIndex: 2, expectedSpaceAfterTwips: 120);
+        AssertTxParagraphSpacing(txPath, collectionIndex: 1, expectedSpaceAfterTwips: 120);
+        AssertTxParagraphSpacing(txPath, collectionIndex: 2, expectedSpaceAfterTwips: 100);
+        AssertTxParagraphLineSpacing(txPath, collectionIndex: 2, expectedLineSpacing: 108);
         AssertTxParagraphFormattingStyle(txPath, collectionIndex: 1, expectedStyleName: "Heading");
         AssertTxParagraphFormattingStyle(txPath, collectionIndex: 2, expectedStyleName: "Body");
 
         var model = workflow.GetDocumentModel(response.SessionId).Document;
         Assert.Equal("Heading", model.Sections[0].Blocks[0].Paragraph?.StyleName);
         Assert.Equal("Body", model.Sections[0].Blocks[1].Paragraph?.StyleName);
-        Assert.Equal(12, model.Sections[0].Blocks[0].Paragraph?.ParagraphStyle?.SpaceAfter);
-        Assert.Equal(6, model.Sections[0].Blocks[1].Paragraph?.ParagraphStyle?.SpaceAfter);
+        Assert.Equal(6, model.Sections[0].Blocks[0].Paragraph?.ParagraphStyle?.SpaceAfter);
+        Assert.Equal(5, model.Sections[0].Blocks[1].Paragraph?.ParagraphStyle?.SpaceAfter);
+        Assert.Equal(1.08f, model.Sections[0].Blocks[1].Paragraph?.ParagraphStyle?.LineSpacing);
     }
 
     [SkippableFact]
@@ -1329,6 +2729,162 @@ public sealed class DocumentCreationIntegrationTests
 
         AssertTxParagraphAlignment(txPath, 1, HorizontalAlignment.Right);
         AssertTxParagraphAlignment(txPath, 2, HorizontalAlignment.Left);
+    }
+
+    [SkippableFact]
+    public void FormatParagraphsResolvesSelectedParagraphByTextAndNearestPosition()
+    {
+        SkipIfTxLicenseIsMissing();
+
+        var artifactRoot = GetArtifactRoot();
+        var workflow = CreateWorkflow(artifactRoot);
+        const string repeatedText = "Mutual Nondisclosure Agreement";
+        var response = ApplyOperationsOrSkipIfUnlicensed(workflow, new ApplyOperationsRequest
+        {
+            CreateIfMissing = true,
+            Operations =
+            [
+                new DocumentOperation { Type = BasicTextCapabilityPack.AppendParagraph, Text = repeatedText },
+                new DocumentOperation { Type = BasicTextCapabilityPack.AppendParagraph, Text = "intervening text" },
+                new DocumentOperation { Type = BasicTextCapabilityPack.AppendParagraph, Text = repeatedText }
+            ]
+        });
+        var matches = workflow.SearchTextRanges(response.SessionId, repeatedText, matchCase: true).Matches;
+        Assert.Equal(2, matches.Count);
+
+        var changed = ApplyOperationsOrSkipIfUnlicensed(workflow, new ApplyOperationsRequest
+        {
+            SessionId = response.SessionId,
+            CreateIfMissing = false,
+            Operations =
+            [
+                new DocumentOperation
+                {
+                    Type = BasicTextCapabilityPack.FormatParagraphs,
+                    MatchText = $"  {repeatedText}\r\n",
+                    MatchCase = true,
+                    NearTextPosition = matches[1].Start + 4,
+                    Paragraph = new Neutral.ParagraphStyleDefinition { Alignment = "center" }
+                }
+            ]
+        });
+
+        var result = Assert.Single(changed.Results);
+        var paragraphIndexes = Assert.IsType<List<int>>(result.Metadata["paragraphIndexes"]);
+        Assert.Equal([2], paragraphIndexes);
+        string txPath = Path.Combine(artifactRoot, "sessions", response.SessionId, "document.tx");
+        AssertTxParagraphAlignment(txPath, 1, HorizontalAlignment.Left);
+        AssertTxParagraphAlignment(txPath, 3, HorizontalAlignment.Center);
+    }
+
+    [SkippableFact]
+    public void FormatParagraphsCanResolveAParagraphInsideATable()
+    {
+        SkipIfTxLicenseIsMissing();
+
+        var artifactRoot = GetArtifactRoot();
+        var workflow = CreateWorkflow(artifactRoot);
+        const string selectedText = "Payment terms are net 30 days";
+        var response = ApplyOperationsOrSkipIfUnlicensed(workflow, new ApplyOperationsRequest
+        {
+            CreateIfMissing = true,
+            Operations =
+            [
+                new DocumentOperation
+                {
+                    Type = TableCapabilityPack.AppendTable,
+                    TableId = "94",
+                    Rows = [["Terms", selectedText]]
+                },
+                new DocumentOperation
+                {
+                    Type = BasicTextCapabilityPack.FormatParagraphs,
+                    MatchText = selectedText,
+                    MatchCase = true,
+                    NearTextPosition = 0,
+                    Paragraph = new Neutral.ParagraphStyleDefinition { Alignment = "center" }
+                }
+            ]
+        });
+
+        string txPath = Path.Combine(artifactRoot, "sessions", response.SessionId, "document.tx");
+        AssertTxTableCellParagraphAlignment(txPath, 94, 1, 2, HorizontalAlignment.Center);
+        var model = workflow.GetDocumentModel(response.SessionId).Document;
+        var table = Assert.Single(model.Sections[0].Blocks).Table;
+        Assert.NotNull(table);
+        Assert.Equal("center", table.Rows[0].Cells[1].Blocks[0].Paragraph?.ParagraphStyle?.Alignment);
+    }
+
+    [SkippableFact]
+    public void FormatParagraphsSupportsAnInclusiveParagraphRange()
+    {
+        SkipIfTxLicenseIsMissing();
+
+        var artifactRoot = GetArtifactRoot();
+        var workflow = CreateWorkflow(artifactRoot);
+        var response = ApplyOperationsOrSkipIfUnlicensed(workflow, new ApplyOperationsRequest
+        {
+            CreateIfMissing = true,
+            Operations =
+            [
+                new DocumentOperation { Type = BasicTextCapabilityPack.AppendParagraph, Text = "First" },
+                new DocumentOperation { Type = BasicTextCapabilityPack.AppendParagraph, Text = "Second" },
+                new DocumentOperation { Type = BasicTextCapabilityPack.AppendParagraph, Text = "Third" },
+                new DocumentOperation { Type = BasicTextCapabilityPack.AppendParagraph, Text = "Fourth" },
+                new DocumentOperation
+                {
+                    Type = BasicTextCapabilityPack.FormatParagraphs,
+                    StartParagraphIndex = 1,
+                    EndParagraphIndex = 2,
+                    Paragraph = new Neutral.ParagraphStyleDefinition { Alignment = "justify" }
+                }
+            ]
+        });
+
+        string txPath = Path.Combine(artifactRoot, "sessions", response.SessionId, "document.tx");
+        AssertTxParagraphAlignment(txPath, 1, HorizontalAlignment.Left);
+        AssertTxParagraphAlignment(txPath, 2, HorizontalAlignment.Justify);
+        AssertTxParagraphAlignment(txPath, 3, HorizontalAlignment.Justify);
+        AssertTxParagraphAlignment(txPath, 4, HorizontalAlignment.Left);
+    }
+
+    [SkippableFact]
+    public void ApplyParagraphStyleCanResolveTargetByMatchingText()
+    {
+        SkipIfTxLicenseIsMissing();
+
+        var artifactRoot = GetArtifactRoot();
+        var workflow = CreateWorkflow(artifactRoot);
+        var response = ApplyOperationsOrSkipIfUnlicensed(workflow, new ApplyOperationsRequest
+        {
+            CreateIfMissing = true,
+            Operations =
+            [
+                new DocumentOperation
+                {
+                    Type = BasicTextCapabilityPack.AppendParagraph,
+                    StyleName = "Body",
+                    Text = "Body paragraph"
+                },
+                new DocumentOperation
+                {
+                    Type = BasicTextCapabilityPack.AppendParagraph,
+                    StyleName = "Body",
+                    Text = "Payment Terms"
+                },
+                new DocumentOperation
+                {
+                    Type = BasicTextCapabilityPack.ApplyStyleToParagraph,
+                    MatchText = "Payment Terms",
+                    MatchCase = true,
+                    StyleName = "Heading"
+                }
+            ]
+        });
+
+        string txPath = Path.Combine(artifactRoot, "sessions", response.SessionId, "document.tx");
+        AssertTxParagraphFormattingStyle(txPath, collectionIndex: 1, expectedStyleName: "Body");
+        AssertTxParagraphFormattingStyle(txPath, collectionIndex: 2, expectedStyleName: "Heading");
     }
 
     [SkippableFact]
@@ -1919,6 +3475,46 @@ public sealed class DocumentCreationIntegrationTests
     }
 
     [SkippableFact]
+    public void RenderDocumentModelPreservesParagraphBeforeTrailingSection()
+    {
+        SkipIfTxLicenseIsMissing();
+
+        var artifactRoot = GetArtifactRoot();
+        var workflow = CreateWorkflow(artifactRoot);
+        var document = new Document
+        {
+            Title = "Hello AI!",
+            Sections =
+            [
+                new Neutral.Section
+                {
+                    Blocks =
+                    [
+                        new DocumentBlock
+                        {
+                            Type = "paragraph",
+                            Paragraph = new Neutral.Paragraph
+                            {
+                                Runs = [new Run { Text = "Hello AI!" }]
+                            }
+                        }
+                    ]
+                },
+                new Neutral.Section()
+            ]
+        };
+
+        var response = RenderDocumentModelOrSkipIfUnlicensed(workflow, new RenderDocumentModelRequest
+        {
+            CreateIfMissing = true,
+            Document = document
+        });
+
+        string text = workflow.GetText(response.SessionId).Text;
+        Assert.Equal(2, text.Split("Hello AI!", StringSplitOptions.None).Length - 1);
+    }
+
+    [SkippableFact]
     public void ApplyOperationsCreatesMultipleSectionsWithDifferentLayouts()
     {
         SkipIfTxLicenseIsMissing();
@@ -2147,6 +3743,46 @@ public sealed class DocumentCreationIntegrationTests
         Assert.Equal(expectedValue, table.Cells.GetItem(row, column).Text);
     }
 
+    private static void AssertTxTableCellPadding(
+        string txPath,
+        int tableId,
+        int row,
+        int column,
+        int left,
+        int right,
+        int top,
+        int bottom)
+    {
+        TxTextControlLicensing.Configure();
+
+        using var tx = new ServerTextControl();
+        tx.Create();
+        tx.Load(txPath, StreamType.InternalUnicodeFormat);
+        var cell = tx.Tables.GetItem(tableId).Cells.GetItem(row, column);
+
+        Assert.Equal(left, cell.CellFormat.LeftTextDistance);
+        Assert.Equal(right, cell.CellFormat.RightTextDistance);
+        Assert.Equal(top, cell.CellFormat.TopTextDistance);
+        Assert.Equal(bottom, cell.CellFormat.BottomTextDistance);
+    }
+
+    private static void AssertTxTableCellParagraphAlignment(
+        string txPath,
+        int tableId,
+        int row,
+        int column,
+        HorizontalAlignment expectedAlignment)
+    {
+        TxTextControlLicensing.Configure();
+
+        using var tx = new ServerTextControl();
+        tx.Create();
+        tx.Load(txPath, StreamType.InternalUnicodeFormat);
+        tx.Tables.GetItem(tableId).Cells.GetItem(row, column).Select();
+
+        Assert.Equal(expectedAlignment, tx.Selection.ParagraphFormat.Alignment);
+    }
+
     private static void AssertTxTableCellTextFormat(
         string txPath,
         int tableId,
@@ -2171,6 +3807,59 @@ public sealed class DocumentCreationIntegrationTests
         Assert.Equal(ColorTranslator.FromHtml(expectedHex).ToArgb(), selection.ForeColor.ToArgb());
         Assert.Equal(expectedBold, selection.Bold);
         Assert.False(selection.Italic);
+    }
+
+    private static void AssertTxTextFormat(
+        string txPath,
+        string text,
+        bool expectedBold,
+        string expectedHex)
+    {
+        TxTextControlLicensing.Configure();
+
+        using var tx = new ServerTextControl();
+        tx.Create();
+        tx.Load(txPath, StreamType.InternalUnicodeFormat);
+        int start = tx.Find(text, 0, FindOptions.MatchCase);
+        Assert.True(start >= 0, $"Text '{text}' was not found in the TX document.");
+        tx.Selection = new Selection(start, text.Length);
+
+        Assert.Equal(expectedBold, tx.Selection.Bold);
+        Assert.Equal(ColorTranslator.FromHtml(expectedHex).ToArgb(), tx.Selection.ForeColor.ToArgb());
+    }
+
+    private static void AssertTxAllTextMatchesFormat(
+        string txPath,
+        string text,
+        bool wholeWord,
+        int expectedCount,
+        bool expectedBold,
+        string expectedHex)
+    {
+        TxTextControlLicensing.Configure();
+
+        using var tx = new ServerTextControl();
+        tx.Create();
+        tx.Load(txPath, StreamType.InternalUnicodeFormat);
+        FindOptions options = wholeWord ? FindOptions.MatchWholeWord : (FindOptions)0;
+        int count = 0;
+        int searchStart = 0;
+        while (true)
+        {
+            int start = tx.Find(text, searchStart, options);
+            if (start < 0)
+            {
+                break;
+            }
+
+            tx.Selection = new Selection(start, text.Length);
+            Assert.Equal(expectedBold, tx.Selection.Bold);
+            Assert.Equal(ColorTranslator.FromHtml(expectedHex).ToArgb(), tx.Selection.ForeColor.ToArgb());
+            count++;
+            searchStart = start + text.Length;
+        }
+
+        Assert.Equal(expectedCount, count);
     }
 
     private static void AssertTxTableCellBackColor(string txPath, int tableId, int row, int column, string expectedHex)
@@ -2327,6 +4016,21 @@ public sealed class DocumentCreationIntegrationTests
 
         Assert.True(collectionIndex >= 1 && collectionIndex <= tx.Paragraphs.Count);
         Assert.Equal(expectedSpaceAfterTwips, tx.Paragraphs[collectionIndex].Format.BottomDistance);
+    }
+
+    private static void AssertTxParagraphLineSpacing(
+        string txPath,
+        int collectionIndex,
+        int expectedLineSpacing)
+    {
+        TxTextControlLicensing.Configure();
+
+        using var tx = new ServerTextControl();
+        tx.Create();
+        tx.Load(txPath, StreamType.InternalUnicodeFormat);
+
+        Assert.True(collectionIndex >= 1 && collectionIndex <= tx.Paragraphs.Count);
+        Assert.Equal(expectedLineSpacing, tx.Paragraphs[collectionIndex].Format.LineSpacing);
     }
 
     private static void AssertTxParagraphFormattingStyle(
@@ -2542,6 +4246,18 @@ public sealed class DocumentCreationIntegrationTests
         }
     }
 
+    private static void AssertDocxTableRowCount(string docxPath, int expectedRowCount)
+    {
+        using var zip = System.IO.Compression.ZipFile.OpenRead(docxPath);
+        var entry = zip.GetEntry("word/document.xml")
+            ?? throw new InvalidOperationException("DOCX does not contain word/document.xml.");
+        using var reader = new StreamReader(entry.Open());
+        string documentXml = reader.ReadToEnd();
+        int rowCount = System.Text.RegularExpressions.Regex.Matches(documentXml, "<w:tr(?:\\s|>)").Count;
+
+        Assert.Equal(expectedRowCount, rowCount);
+    }
+
     private static void AssertDocxContainsMedia(string docxPath)
     {
         using var zip = System.IO.Compression.ZipFile.OpenRead(docxPath);
@@ -2612,6 +4328,201 @@ public sealed class DocumentCreationIntegrationTests
         Assert.Fail($"DOCX parts starting with {entryPrefix} do not contain '{expectedText}'.");
     }
 
+    [SkippableFact]
+    public void UpdatingNamedStylePropagatesAndLiveInspectionReportsUsage()
+    {
+        SkipIfTxLicenseIsMissing();
+        string artifactRoot = Path.Combine(GetArtifactRoot(), "style-update", Guid.NewGuid().ToString("N"));
+        var workflow = CreateWorkflow(artifactRoot);
+        var created = ApplyOperationsOrSkipIfUnlicensed(workflow, new ApplyOperationsRequest
+        {
+            CreateIfMissing = true,
+            Operations =
+            [
+                new DocumentOperation
+                {
+                    Type = BasicTextCapabilityPack.DefineStyle,
+                    Style = new TextStyleDefinition { Name = "Heading 1", FontSize = 18, Bold = true }
+                },
+                new DocumentOperation { Type = BasicTextCapabilityPack.AppendParagraph, StyleName = "Heading 1", Text = "First heading" },
+                new DocumentOperation { Type = BasicTextCapabilityPack.AppendParagraph, StyleName = "Heading 1", Text = "Second heading" }
+            ]
+        });
+
+        object setStyleResult = new StyleTools(workflow).SetDocumentStyle(new SetDocumentStyleRequest
+        {
+            SessionId = created.SessionId,
+            StyleName = "Heading 1",
+            Text = new TextStyleDefinition
+            {
+                ColorHex = "#FF0000"
+            },
+            Paragraph = new ParagraphStyleDefinition
+            {
+                Alignment = "center",
+                KeepWithNext = true
+            }
+        });
+        var setStyleResponse = Assert.IsType<ApplyOperationsResponse>(setStyleResult);
+        Assert.Equal("applied", Assert.Single(setStyleResponse.Results).Status);
+
+        DocumentStylesResponse response = workflow.GetDocumentStyles(created.SessionId);
+        StyleInspection heading = Assert.Single(response.Styles, style => style.Name == "Heading 1");
+        Assert.Equal("#FF0000", heading.Text?.ColorHex);
+        Assert.Equal(2, heading.UsageCount);
+
+        string txPath = Path.Combine(artifactRoot, "sessions", created.SessionId, "document.tx");
+        using var tx = new ServerTextControl();
+        tx.Create();
+        tx.Load(txPath, StreamType.InternalUnicodeFormat);
+        Assert.Equal(Color.Red.ToArgb(), tx.ParagraphStyles.GetItem("Heading 1").ForeColor.ToArgb());
+        Assert.Equal(HorizontalAlignment.Center, tx.ParagraphStyles.GetItem("Heading 1").ParagraphFormat.Alignment);
+        Assert.True(tx.ParagraphStyles.GetItem("Heading 1").ParagraphFormat.KeepWithNext);
+        Assert.Equal("Heading 1", tx.Paragraphs[1].FormattingStyle);
+        Assert.Equal("Heading 1", tx.Paragraphs[2].FormattingStyle);
+        tx.Paragraphs[1].Select();
+        Assert.Equal(Color.Red.ToArgb(), tx.Selection.ForeColor.ToArgb());
+        Assert.Equal(HorizontalAlignment.Center, tx.Paragraphs[1].Format.Alignment);
+    }
+
+    [SkippableFact]
+    public void CreateStylesFromParagraphsGroupsEquivalentDirectFormatting()
+    {
+        SkipIfTxLicenseIsMissing();
+        string artifactRoot = Path.Combine(GetArtifactRoot(), "style-derivation", Guid.NewGuid().ToString("N"));
+        var workflow = CreateWorkflow(artifactRoot);
+        var created = ApplyOperationsOrSkipIfUnlicensed(workflow, new ApplyOperationsRequest
+        {
+            CreateIfMissing = true,
+            Operations =
+            [
+                new DocumentOperation { Type = BasicTextCapabilityPack.AppendParagraph, StyleName = "Body", Text = "Alpha direct formatting" },
+                new DocumentOperation { Type = BasicTextCapabilityPack.AppendParagraph, StyleName = "Body", Text = "Beta direct formatting" },
+                new DocumentOperation
+                {
+                    Type = BasicTextCapabilityPack.FormatTextOccurrences,
+                    MatchText = "Alpha direct formatting",
+                    ReplaceAll = true,
+                    Style = new TextStyleDefinition { Bold = true, ColorHex = "#006400" }
+                },
+                new DocumentOperation
+                {
+                    Type = BasicTextCapabilityPack.FormatTextOccurrences,
+                    MatchText = "Beta direct formatting",
+                    ReplaceAll = true,
+                    Style = new TextStyleDefinition { Bold = true, ColorHex = "#006400" }
+                }
+            ]
+        });
+
+        object createStylesResult = new StyleTools(workflow).CreateStylesFromParagraphs(
+            new CreateStylesFromParagraphsRequest
+            {
+                SessionId = created.SessionId,
+                StyleNamePrefix = "Detected",
+                MinimumOccurrences = 2,
+                IncludeStyledParagraphs = true
+            });
+        var createStylesResponse = Assert.IsType<ApplyOperationsResponse>(createStylesResult);
+        Assert.Equal("applied", Assert.Single(createStylesResponse.Results).Status);
+
+        DocumentStylesResponse response = workflow.GetDocumentStyles(created.SessionId);
+        StyleInspection detected = Assert.Single(response.Styles, style => style.Name.StartsWith("Detected ", StringComparison.Ordinal));
+        Assert.Equal(2, detected.UsageCount);
+        Assert.True(detected.Text?.Bold);
+        Assert.Equal("#006400", detected.Text?.ColorHex);
+
+        var exportedTx = workflow.GetAsBase64(new GetAsBase64Request
+        {
+            SessionId = created.SessionId,
+            Format = "tx"
+        });
+        string reloadedTxPath = Path.Combine(artifactRoot, "reloaded-document.tx");
+        File.WriteAllBytes(reloadedTxPath, Convert.FromBase64String(exportedTx.Base64Document));
+        using (var reloadedTx = new ServerTextControl())
+        {
+            reloadedTx.Create();
+            reloadedTx.Load(reloadedTxPath, StreamType.InternalUnicodeFormat);
+            Assert.NotNull(DocumentOperationFormatter.FindParagraphStyle(reloadedTx, detected.Name));
+            Assert.Equal(detected.Name, reloadedTx.Paragraphs[1].FormattingStyle);
+            Assert.Equal(detected.Name, reloadedTx.Paragraphs[2].FormattingStyle);
+        }
+
+        ApplyOperationsOrSkipIfUnlicensed(workflow, new ApplyOperationsRequest
+        {
+            SessionId = created.SessionId,
+            CreateIfMissing = false,
+            Operations =
+            [
+                new DocumentOperation
+                {
+                    Type = BasicTextCapabilityPack.DefineStyle,
+                    Style = new TextStyleDefinition { Name = detected.Name, ColorHex = "#FF0000" }
+                }
+            ]
+        });
+        string txPath = Path.Combine(artifactRoot, "sessions", created.SessionId, "document.tx");
+        using var tx = new ServerTextControl();
+        tx.Create();
+        tx.Load(txPath, StreamType.InternalUnicodeFormat);
+        tx.Paragraphs[1].Select();
+        Assert.Equal(Color.Red.ToArgb(), tx.Selection.ForeColor.ToArgb());
+    }
+
+    [SkippableFact]
+    public void RenameAndDeleteStylePreserveExplicitParagraphLinks()
+    {
+        SkipIfTxLicenseIsMissing();
+        string artifactRoot = Path.Combine(GetArtifactRoot(), "style-lifecycle", Guid.NewGuid().ToString("N"));
+        var workflow = CreateWorkflow(artifactRoot);
+        var created = ApplyOperationsOrSkipIfUnlicensed(workflow, new ApplyOperationsRequest
+        {
+            CreateIfMissing = true,
+            Operations =
+            [
+                new DocumentOperation
+                {
+                    Type = BasicTextCapabilityPack.DefineStyle,
+                    Style = new TextStyleDefinition { Name = "Review", Italic = true }
+                },
+                new DocumentOperation { Type = BasicTextCapabilityPack.AppendParagraph, StyleName = "Review", Text = "Review me" },
+                new DocumentOperation
+                {
+                    Type = BasicTextCapabilityPack.RenameStyle,
+                    StyleName = "Review",
+                    NewStyleName = "Approved"
+                }
+            ]
+        });
+
+        StyleInspection approved = Assert.Single(
+            workflow.GetDocumentStyles(created.SessionId).Styles,
+            style => style.Name == "Approved");
+        Assert.Equal(1, approved.UsageCount);
+
+        ApplyOperationsOrSkipIfUnlicensed(workflow, new ApplyOperationsRequest
+        {
+            SessionId = created.SessionId,
+            CreateIfMissing = false,
+            Operations =
+            [
+                new DocumentOperation
+                {
+                    Type = BasicTextCapabilityPack.DeleteStyle,
+                    StyleName = "Approved",
+                    ReplacementStyleName = "Body"
+                }
+            ]
+        });
+
+        Assert.DoesNotContain(workflow.GetDocumentStyles(created.SessionId).Styles, style => style.Name == "Approved");
+        string txPath = Path.Combine(artifactRoot, "sessions", created.SessionId, "document.tx");
+        using var tx = new ServerTextControl();
+        tx.Create();
+        tx.Load(txPath, StreamType.InternalUnicodeFormat);
+        Assert.Equal("Body", tx.Paragraphs[1].FormattingStyle);
+    }
+
     private static DocumentWorkflowService CreateWorkflow(string artifactRoot)
     {
         var automationOptions = new DocumentAutomationOptions
@@ -2625,20 +4536,30 @@ public sealed class DocumentCreationIntegrationTests
                 Heading2 = "Heading2",
                 Body = "Body"
             },
+            DefaultPageLayout = new PageLayoutDefinition
+            {
+                PageSize = "Letter",
+                Orientation = "portrait",
+                Unit = "in",
+                MarginLeft = 0.8f,
+                MarginRight = 0.8f,
+                MarginTop = 0.75f,
+                MarginBottom = 0.75f
+            },
             StylePresets =
             [
                 new TextStyleDefinition
                 {
                     Name = "Title",
                     FontName = "Liberation Sans",
-                    FontSize = 30,
+                    FontSize = 26,
                     FontSizeUnit = "pt",
                     Bold = true,
-                    ColorHex = "#1F4E79",
+                    ColorHex = "#163A5F",
                     Paragraph = new ParagraphStyleDefinition
                     {
                         SpaceBefore = 0,
-                        SpaceAfter = 16,
+                        SpaceAfter = 18,
                         Unit = "pt"
                     }
                 },
@@ -2646,13 +4567,13 @@ public sealed class DocumentCreationIntegrationTests
                 {
                     Name = "Heading",
                     FontName = "Liberation Sans",
-                    FontSize = 20,
-                    FontSizeUnit = "px",
+                    FontSize = 16,
+                    FontSizeUnit = "pt",
                     Bold = true,
                     Paragraph = new ParagraphStyleDefinition
                     {
-                        SpaceBefore = 0,
-                        SpaceAfter = 12,
+                        SpaceBefore = 16,
+                        SpaceAfter = 6,
                         Unit = "pt"
                     }
                 },
@@ -2660,14 +4581,14 @@ public sealed class DocumentCreationIntegrationTests
                 {
                     Name = "Heading2",
                     FontName = "Liberation Sans",
-                    FontSize = 16,
+                    FontSize = 12,
                     FontSizeUnit = "pt",
                     Bold = true,
-                    ColorHex = "#344054",
+                    ColorHex = "#274C6B",
                     Paragraph = new ParagraphStyleDefinition
                     {
-                        SpaceBefore = 10,
-                        SpaceAfter = 8,
+                        SpaceBefore = 12,
+                        SpaceAfter = 5,
                         Unit = "pt"
                     }
                 },
@@ -2675,16 +4596,17 @@ public sealed class DocumentCreationIntegrationTests
                 {
                     Name = "Body",
                     FontName = "Liberation Sans",
-                    FontSize = 12,
-                    FontSizeUnit = "px",
+                    FontSize = 10.5f,
+                    FontSizeUnit = "pt",
                     Bold = false,
                     Italic = false,
                     Underline = false,
-                    ColorHex = "#000000",
+                    ColorHex = "#1F2937",
                     Paragraph = new ParagraphStyleDefinition
                     {
                         SpaceBefore = 0,
-                        SpaceAfter = 6,
+                        SpaceAfter = 5,
+                        LineSpacing = 1.08f,
                         Unit = "pt"
                     }
                 }
@@ -2705,7 +4627,12 @@ public sealed class DocumentCreationIntegrationTests
                     },
                     HeaderCellStyle = new CellStyleDefinition
                     {
-                        BackgroundColorHex = "#1F4E79",
+                        BackgroundColorHex = "#163A5F",
+                        PaddingLeft = 6,
+                        PaddingRight = 6,
+                        PaddingTop = 5,
+                        PaddingBottom = 5,
+                        VerticalAlignment = "center",
                         Border = new CellBorderDefinition
                         {
                             Width = 10,
@@ -2723,6 +4650,11 @@ public sealed class DocumentCreationIntegrationTests
                     BodyCellStyle = new CellStyleDefinition
                     {
                         BackgroundColorHex = "#FFFFFF",
+                        PaddingLeft = 6,
+                        PaddingRight = 6,
+                        PaddingTop = 4,
+                        PaddingBottom = 4,
+                        VerticalAlignment = "center",
                         Border = new CellBorderDefinition
                         {
                             Width = 10,
@@ -2731,7 +4663,12 @@ public sealed class DocumentCreationIntegrationTests
                     },
                     AlternatingRowCellStyle = new CellStyleDefinition
                     {
-                        BackgroundColorHex = "#F8FAFC",
+                        BackgroundColorHex = "#F4F7FA",
+                        PaddingLeft = 6,
+                        PaddingRight = 6,
+                        PaddingTop = 4,
+                        PaddingBottom = 4,
+                        VerticalAlignment = "center",
                         Border = new CellBorderDefinition
                         {
                             Width = 10,
@@ -2743,6 +4680,9 @@ public sealed class DocumentCreationIntegrationTests
             EnabledOperations =
             [
                 BasicTextCapabilityPack.DefineStyle,
+                BasicTextCapabilityPack.RenameStyle,
+                BasicTextCapabilityPack.DeleteStyle,
+                BasicTextCapabilityPack.CreateStylesFromParagraphs,
                 BasicTextCapabilityPack.AppendParagraph,
                 BasicTextCapabilityPack.ApplyStyleToParagraph,
                 BasicTextCapabilityPack.FormatParagraphs,
@@ -2772,6 +4712,9 @@ public sealed class DocumentCreationIntegrationTests
         IDocumentOperationHandler[] handlers =
         [
             new DefineStyleOperationHandler(),
+            new RenameStyleOperationHandler(),
+            new DeleteStyleOperationHandler(),
+            new CreateStylesFromParagraphsOperationHandler(),
             new AppendParagraphOperationHandler(),
             new ApplyStyleToParagraphOperationHandler(),
             new FormatParagraphsOperationHandler(),
@@ -2827,20 +4770,15 @@ public sealed class DocumentCreationIntegrationTests
             Microsoft.Extensions.Options.Options.Create(automationOptions));
     }
 
-    private static string GetArtifactRoot()
+    private static string GetArtifactRoot([CallerFilePath] string sourceFilePath = "")
     {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "TxTextControl.McpServer.sln")))
+        string? testsDirectory = Path.GetDirectoryName(sourceFilePath);
+        if (!string.IsNullOrWhiteSpace(testsDirectory))
         {
-            directory = directory.Parent;
+            return Path.Combine(testsDirectory, "TestArtifacts");
         }
 
-        if (directory is null)
-        {
-            throw new InvalidOperationException("Could not locate repository root.");
-        }
-
-        return Path.Combine(directory.FullName, "Tests", "TestArtifacts");
+        throw new InvalidOperationException("Could not locate the test artifact directory.");
     }
 
     private static byte[] CreateSamplePngBytes()

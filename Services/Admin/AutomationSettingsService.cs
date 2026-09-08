@@ -24,6 +24,8 @@ public sealed class AutomationSettingsService
     private readonly List<IDocumentOperationHandler> _knownOperations;
     private readonly string _settingsPath;
     private readonly object _gate = new();
+    private volatile HashSet<string> _enabledPacks;
+    private volatile HashSet<string> _enabledOperations;
 
     public AutomationSettingsService(
         IOptions<DocumentAutomationOptions> options,
@@ -48,19 +50,27 @@ public sealed class AutomationSettingsService
         _knownPacks = knownPacks.ToList();
         _knownOperations = knownOperations.ToList();
         _settingsPath = settingsPath;
+        _enabledPacks = ResolveEnabledValues(
+                _options.EnabledCapabilityPacks,
+                _knownPacks.Select(pack => pack.Name))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        _enabledOperations = ResolveEnabledValues(
+                _options.EnabledOperations,
+                _knownOperations.Select(operation => operation.Type))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
     public IReadOnlyList<string> GetEnabledCapabilityPacks()
-        => ResolveEnabledValues(_options.EnabledCapabilityPacks, _knownPacks.Select(pack => pack.Name));
+        => _knownPacks.Select(pack => pack.Name).Where(_enabledPacks.Contains).ToArray();
 
     public IReadOnlyList<string> GetEnabledOperations()
-        => ResolveEnabledValues(_options.EnabledOperations, _knownOperations.Select(operation => operation.Type));
+        => _knownOperations.Select(operation => operation.Type).Where(_enabledOperations.Contains).ToArray();
 
     public bool IsCapabilityPackEnabled(string capabilityPack)
-        => Contains(GetEnabledCapabilityPacks(), capabilityPack);
+        => _enabledPacks.Contains(capabilityPack);
 
     public bool IsOperationEnabled(string operation)
-        => Contains(GetEnabledOperations(), operation);
+        => _enabledOperations.Contains(operation);
 
     public IReadOnlyList<TextStyleDefinition> GetStylePresets()
         => _options.StylePresets;
@@ -73,6 +83,32 @@ public sealed class AutomationSettingsService
 
     public StyleRoleDefinition GetStyleRoles()
         => _options.StyleRoles;
+
+    internal DocumentAutomationOptions GetWorkerSnapshot()
+    {
+        lock (_gate)
+        {
+            return JsonSerializer.Deserialize<DocumentAutomationOptions>(
+                JsonSerializer.Serialize(_options))!;
+        }
+    }
+
+    internal void ApplyWorkerSnapshot(DocumentAutomationOptions snapshot)
+    {
+        // Keep the options instance shared by the engine and operation handlers.
+        // Called between commands, never while a document operation is executing.
+        _options.DefaultParagraphStyleName = snapshot.DefaultParagraphStyleName;
+        _options.StyleRoles = snapshot.StyleRoles;
+        _options.StylePresets = snapshot.StylePresets;
+        _options.TableStylePresets = snapshot.TableStylePresets;
+        _options.DefaultPageLayout = snapshot.DefaultPageLayout;
+        _options.EnabledCapabilityPacks = snapshot.EnabledCapabilityPacks;
+        _options.EnabledOperations = snapshot.EnabledOperations;
+        _enabledPacks = ResolveEnabledValues(snapshot.EnabledCapabilityPacks,
+            _knownPacks.Select(pack => pack.Name)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        _enabledOperations = ResolveEnabledValues(snapshot.EnabledOperations,
+            _knownOperations.Select(operation => operation.Type)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
 
     public void Save(
         IEnumerable<string> enabledCapabilityPacks,
@@ -105,6 +141,8 @@ public sealed class AutomationSettingsService
         {
             _options.EnabledCapabilityPacks = normalizedPacks;
             _options.EnabledOperations = normalizedOperations;
+            _enabledPacks = normalizedPacks.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            _enabledOperations = normalizedOperations.ToHashSet(StringComparer.OrdinalIgnoreCase);
 
             var root = LoadSettings();
             var automation = root[DocumentAutomationOptions.SectionName] as JsonObject;
@@ -218,9 +256,6 @@ public sealed class AutomationSettingsService
             .ToList();
     }
 
-    private static bool Contains(IEnumerable<string> values, string value)
-        => values.Any(item => string.Equals(item, value, StringComparison.OrdinalIgnoreCase));
-
     private string ResolveBodyStyleName()
         => !string.IsNullOrWhiteSpace(_options.StyleRoles?.Body)
             ? _options.StyleRoles.Body
@@ -290,6 +325,13 @@ public sealed class AutomationSettingsService
         }
 
         style.BackgroundColorHex = NormalizeHex(style.BackgroundColorHex);
+        style.PaddingUnit = string.IsNullOrWhiteSpace(style.PaddingUnit) ? "pt" : style.PaddingUnit.Trim();
+        style.HorizontalAlignment = string.IsNullOrWhiteSpace(style.HorizontalAlignment)
+            ? null
+            : style.HorizontalAlignment.Trim();
+        style.VerticalAlignment = string.IsNullOrWhiteSpace(style.VerticalAlignment)
+            ? null
+            : style.VerticalAlignment.Trim();
         if (style.Border is not null)
         {
             style.Border.ColorHex = NormalizeHex(style.Border.ColorHex);

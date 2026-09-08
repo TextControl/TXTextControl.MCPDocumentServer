@@ -6,6 +6,7 @@ using System.Linq;
 using TxTextControl.McpServer.Models;
 using TxTextControl.McpServer.Models.Requests;
 using TxTextControl.McpServer.Models.Responses;
+using TxTextControl.McpServer.Services.Operations;
 using TXTextControl;
 
 namespace TxTextControl.McpServer.Services;
@@ -36,6 +37,18 @@ public sealed partial class ServerTextControlDocumentEngine
             throw new ArgumentNullException(nameof(request));
         }
 
+        if (!request.Bold.HasValue
+            && !request.Italic.HasValue
+            && !request.Underline.HasValue
+            && string.IsNullOrWhiteSpace(request.ColorHex)
+            && string.IsNullOrWhiteSpace(request.FontName)
+            && !request.FontSize.HasValue)
+        {
+            throw new ArgumentException(
+                "At least one character formatting property is required: bold, italic, underline, color_hex, font_name, or font_size. Use format_paragraph for alignment and paragraph spacing.",
+                nameof(request));
+        }
+
         var hasRange = request.Start.HasValue || request.Length.HasValue;
         var hasParagraph = request.ParagraphIndex.HasValue;
 
@@ -56,8 +69,7 @@ public sealed partial class ServerTextControlDocumentEngine
 
         using (var tx = CreateServerTextControl())
         {
-            tx.Create();
-            tx.Load(workingDocumentPath, StreamType.InternalUnicodeFormat);
+            LoadWorkingDocument(tx, workingDocumentPath);
 
             Selection selection;
 
@@ -90,7 +102,17 @@ public sealed partial class ServerTextControlDocumentEngine
                     throw new ArgumentException("start and length must be >= 0.", nameof(request));
                 }
 
-                selection = new Selection(start, length);
+                if (start + length > tx.TextChars.Count)
+                {
+                    throw new ArgumentException(
+                        $"The character range is outside the TX text-position length of {tx.TextChars.Count}.",
+                        nameof(request));
+                }
+
+                // Attach the range before mutating its formatting. A detached Selection can
+                // otherwise apply properties at the current input position instead.
+                tx.Selection = new Selection(start, length);
+                selection = tx.Selection;
             }
 
             if (request.Bold.HasValue)
@@ -130,7 +152,7 @@ public sealed partial class ServerTextControlDocumentEngine
             }
 
             tx.Selection = selection;
-            tx.Save(workingDocumentPath, StreamType.InternalUnicodeFormat);
+            SaveWorkingDocument(tx, workingDocumentPath);
         }
 
         return new DocumentState
@@ -158,8 +180,7 @@ public sealed partial class ServerTextControlDocumentEngine
 
         using (var tx = CreateServerTextControl())
         {
-            tx.Create();
-            tx.Load(workingDocumentPath, StreamType.InternalUnicodeFormat);
+            LoadWorkingDocument(tx, workingDocumentPath);
 
             foreach (Paragraph paragraph in tx.Paragraphs)
             {
@@ -201,8 +222,7 @@ public sealed partial class ServerTextControlDocumentEngine
 
         using (var tx = CreateServerTextControl())
         {
-            tx.Create();
-            tx.Load(workingDocumentPath, StreamType.InternalUnicodeFormat);
+            LoadWorkingDocument(tx, workingDocumentPath);
 
             var index = 0;
             foreach (Paragraph paragraph in tx.Paragraphs)
@@ -268,8 +288,7 @@ public sealed partial class ServerTextControlDocumentEngine
 
         using (var tx = CreateServerTextControl())
         {
-            tx.Create();
-            tx.Load(workingDocumentPath, StreamType.InternalUnicodeFormat);
+            LoadWorkingDocument(tx, workingDocumentPath);
 
             var options = (FindOptions)0;
             if (matchCase)
@@ -321,14 +340,257 @@ public sealed partial class ServerTextControlDocumentEngine
 
         using (var tx = CreateServerTextControl())
         {
-            tx.Create();
-            tx.Load(workingDocumentPath, StreamType.InternalUnicodeFormat);
+            LoadWorkingDocument(tx, workingDocumentPath);
             return tx.Text ?? string.Empty;
         }
     }
 
+    public DocumentEditEngineResult EditDocument(string workingDocumentPath, EditDocumentRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(workingDocumentPath))
+        {
+            throw new ArgumentException("A working document path is required.", nameof(workingDocumentPath));
+        }
+
+        if (!File.Exists(workingDocumentPath))
+        {
+            throw new FileNotFoundException("The working document was not found.", workingDocumentPath);
+        }
+
+        ArgumentNullException.ThrowIfNull(request);
+        int selectorCount = 0;
+        bool usesMatch = !string.IsNullOrEmpty(request.MatchText);
+        bool usesParagraph = request.ParagraphIndex.HasValue
+                             || request.StartParagraphIndex.HasValue
+                             || request.EndParagraphIndex.HasValue;
+        bool usesRange = request.Start.HasValue || request.Length.HasValue;
+        selectorCount += usesMatch ? 1 : 0;
+        selectorCount += usesParagraph ? 1 : 0;
+        selectorCount += usesRange ? 1 : 0;
+        if (selectorCount != 1)
+        {
+            throw new ArgumentException(
+                "Specify exactly one target: matchText, paragraphIndex/startParagraphIndex, or start plus length.",
+                nameof(request));
+        }
+
+        if (request.ReplaceAll && request.OccurrenceIndex.HasValue)
+        {
+            throw new ArgumentException("Do not combine replaceAll with occurrenceIndex.", nameof(request));
+        }
+
+        if (request.ExpectedText is not null && !usesRange)
+        {
+            throw new ArgumentException(
+                "expectedText can only be used with a start/length character range.",
+                nameof(request));
+        }
+
+        using var tx = CreateServerTextControl();
+        LoadWorkingDocument(tx, workingDocumentPath);
+
+        var ranges = new List<SearchTextRange>();
+        var paragraphIndexes = new List<int>();
+        string targetKind;
+
+        if (usesMatch)
+        {
+            List<TextOccurrence> occurrences = TextOccurrenceUtilities.FindOccurrences(
+                tx,
+                request.MatchText!,
+                request.MatchCase,
+                request.WholeWord,
+                null);
+            if (occurrences.Count == 0)
+            {
+                throw new ArgumentException($"No text matched '{request.MatchText}'. Inspect the document and retry with exact text.");
+            }
+
+            IEnumerable<TextOccurrence> selected;
+            if (request.ReplaceAll)
+            {
+                selected = occurrences;
+            }
+            else
+            {
+                int occurrenceIndex = request.OccurrenceIndex ?? 0;
+                if (occurrenceIndex < 0 || occurrenceIndex >= occurrences.Count)
+                {
+                    throw new ArgumentException(
+                        $"occurrenceIndex is out of range. Found {occurrences.Count} occurrence(s), indexed from 0.");
+                }
+
+                selected = [occurrences[occurrenceIndex]];
+            }
+
+            List<TextOccurrence> selectedRanges = selected.ToList();
+            foreach (TextOccurrence occurrence in selectedRanges.OrderByDescending(value => value.Start))
+            {
+                tx.Selection = new Selection(occurrence.Start, occurrence.Length)
+                {
+                    Text = NormalizeReplacementText(request.ReplacementText)
+                };
+            }
+
+            ranges.AddRange(selectedRanges.Select(value => new SearchTextRange
+            {
+                Start = value.Start,
+                Length = value.Length
+            }));
+            targetKind = "text";
+        }
+        else if (usesParagraph)
+        {
+            if (request.ParagraphIndex.HasValue
+                && (request.StartParagraphIndex.HasValue || request.EndParagraphIndex.HasValue))
+            {
+                throw new ArgumentException(
+                    "Use paragraphIndex for one paragraph or startParagraphIndex/endParagraphIndex for a paragraph range, not both.");
+            }
+
+            int startIndex = request.ParagraphIndex ?? request.StartParagraphIndex
+                ?? throw new ArgumentException("startParagraphIndex is required for a paragraph range.");
+            int endIndex = request.ParagraphIndex ?? request.EndParagraphIndex ?? startIndex;
+            if (startIndex < 0 || endIndex < startIndex || endIndex >= tx.Paragraphs.Count)
+            {
+                throw new ArgumentException(
+                    $"Paragraph range is invalid. The document contains {tx.Paragraphs.Count} paragraph(s), indexed from 0.");
+            }
+
+            Paragraph first = tx.Paragraphs[startIndex + 1];
+            Paragraph last = tx.Paragraphs[endIndex + 1];
+            first.Select();
+            int selectionStart = tx.Selection.Start;
+            last.Select();
+            int selectionEnd = tx.Selection.Start + tx.Selection.Length;
+            tx.Selection = new Selection(selectionStart, selectionEnd - selectionStart)
+            {
+                Text = NormalizeReplacementText(request.ReplacementText)
+            };
+            ranges.Add(new SearchTextRange
+            {
+                Start = selectionStart,
+                Length = selectionEnd - selectionStart
+            });
+            paragraphIndexes.AddRange(Enumerable.Range(startIndex, endIndex - startIndex + 1));
+            targetKind = startIndex == endIndex ? "paragraph" : "paragraphRange";
+        }
+        else
+        {
+            if (!request.Start.HasValue || !request.Length.HasValue)
+            {
+                throw new ArgumentException("Both start and length are required for a character range.");
+            }
+
+            int start = request.Start.Value;
+            int length = request.Length.Value;
+            int textLength = tx.TextChars.Count;
+            if (start < 0 || length < 0 || start + length > textLength)
+            {
+                throw new ArgumentException($"Character range is outside the TX text-position length of {textLength}.");
+            }
+
+            if (request.ExpectedText is not null)
+            {
+                tx.Selection = new Selection(start, length);
+                string currentText = tx.Selection.Text ?? string.Empty;
+                if (!string.Equals(currentText, request.ExpectedText, StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        "The character range no longer contains expectedText. Search the current document and retry with fresh TX coordinates.");
+                }
+            }
+
+            tx.Selection = new Selection(start, length)
+            {
+                Text = NormalizeReplacementText(request.ReplacementText)
+            };
+            ranges.Add(new SearchTextRange { Start = start, Length = length });
+            targetKind = "range";
+        }
+
+        SaveWorkingDocument(tx, workingDocumentPath);
+        DocumentContentSnapshot snapshot = CreateContentSnapshot(tx);
+        return new DocumentEditEngineResult(
+            new DocumentState
+            {
+                WorkingDocumentPath = workingDocumentPath,
+                ContentSnapshot = snapshot
+            },
+            targetKind,
+            ranges.Count,
+            ranges,
+            paragraphIndexes);
+    }
+
+    public DocumentContentSnapshot GetContentSnapshot(string workingDocumentPath)
+    {
+        if (string.IsNullOrWhiteSpace(workingDocumentPath))
+        {
+            throw new ArgumentException("A working document path is required.", nameof(workingDocumentPath));
+        }
+
+        if (!File.Exists(workingDocumentPath))
+        {
+            throw new FileNotFoundException("The working document was not found.", workingDocumentPath);
+        }
+
+        using var tx = CreateServerTextControl();
+        LoadWorkingDocument(tx, workingDocumentPath);
+        return CreateContentSnapshot(tx);
+    }
+
+    private static DocumentContentSnapshot CreateContentSnapshot(ServerTextControl tx)
+    {
+        DocumentParagraphSnapshot[] details = tx.Paragraphs
+            .Cast<Paragraph>()
+            .Select(paragraph => new DocumentParagraphSnapshot(
+                TrimParagraphTerminator(paragraph.Text),
+                string.IsNullOrWhiteSpace(paragraph.FormattingStyle) ? null : paragraph.FormattingStyle))
+            .ToArray();
+        DocumentTableSnapshot[] tables = tx.Tables
+            .Cast<Table>()
+            .Select(table => new DocumentTableSnapshot(
+                table.ID.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                table.Rows.Count,
+                table.Columns.Count,
+                Enumerable.Range(0, table.Rows.Count)
+                    .Select(rowIndex => new DocumentTableRowSnapshot(
+                        rowIndex,
+                        Enumerable.Range(0, table.Columns.Count)
+                            .Select(columnIndex =>
+                            {
+                                TableCell cell = table.Cells.GetItem(rowIndex + 1, columnIndex + 1);
+                                return new DocumentTableCellSnapshot(
+                                    rowIndex,
+                                    columnIndex,
+                                    TrimParagraphTerminator(cell.Text),
+                                    cell.Start - 1,
+                                    cell.Length);
+                            })
+                            .ToArray()))
+                    .ToArray()))
+            .ToArray();
+        return new DocumentContentSnapshot(
+            tx.Text ?? string.Empty,
+            details.Select(paragraph => paragraph.Text).ToArray())
+        {
+            ParagraphDetails = details,
+            Tables = tables
+        };
+    }
+
+    private static string TrimParagraphTerminator(string? value)
+        => (value ?? string.Empty).TrimEnd('\r', '\n');
+
     private static string NormalizeTextForMatch(string value)
         => (value ?? string.Empty).ToLowerInvariant();
+
+    private static string NormalizeReplacementText(string value)
+        => (value ?? string.Empty)
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace('\r', '\n')
+            .Replace("\n", "\r\n", StringComparison.Ordinal);
 
     private static Color ParseHexColor(string value)
     {

@@ -1,0 +1,93 @@
+{
+  "label": "worker-pool",
+  "serverUrl": "http://127.0.0.1:5097/mcp",
+  "recordedUtc": "2026-09-04T15:32:00.5838878Z",
+  "serverProcessId": 78936,
+  "workingSetBytes": 113942528,
+  "workerWorkingSetBytes": 143634432,
+  "totalWorkingSetBytes": 257576960,
+  "failureCount": 0,
+  "scenarios": [
+    {
+      "Name": "cold-create-small",
+      "Calls": 1,
+      "Failures": 0,
+      "P50Milliseconds": 361.28,
+      "P95Milliseconds": 361.28,
+      "P99Milliseconds": 361.28,
+      "ThroughputPerSecond": 2.7674643605939644
+    },
+    {
+      "Name": "same-session-10-pdf-exports",
+      "Calls": 10,
+      "Failures": 0,
+      "P50Milliseconds": 10.06,
+      "P95Milliseconds": 25.68,
+      "P99Milliseconds": 25.68,
+      "ThroughputPerSecond": 86.10549990270079
+    },
+    {
+      "Name": "same-session-10-append-edits",
+      "Calls": 10,
+      "Failures": 0,
+      "P50Milliseconds": 16.54,
+      "P95Milliseconds": 52.2,
+      "P99Milliseconds": 52.2,
+      "ThroughputPerSecond": 50.186996749890085
+    },
+    {
+      "Name": "persistent-control-10-new-documents",
+      "Calls": 10,
+      "Failures": 0,
+      "P50Milliseconds": 32.71,
+      "P95Milliseconds": 98.98,
+      "P99Milliseconds": 98.98,
+      "ThroughputPerSecond": 25.95745365686011
+    },
+    {
+      "Name": "cross-session-concurrent-pdf-exports",
+      "Calls": 6,
+      "Failures": 0,
+      "P50Milliseconds": 22.17,
+      "P95Milliseconds": 31.19,
+      "P99Milliseconds": 31.19,
+      "ThroughputPerSecond": 187.90811293277588
+    },
+    {
+      "Name": "conversation-create-inspect-edit-export",
+      "Calls": 1,
+      "Failures": 0,
+      "P50Milliseconds": 87.4,
+      "P95Milliseconds": 87.4,
+      "P99Milliseconds": 87.4,
+      "ThroughputPerSecond": 11.44214508182278
+    },
+    {
+      "Name": "stateless-docx-to-pdf",
+      "Calls": 3,
+      "Failures": 0,
+      "P50Milliseconds": 41.5,
+      "P95Milliseconds": 48.31,
+      "P99Milliseconds": 48.31,
+      "ThroughputPerSecond": 22.89532790307034
+    },
+    {
+      "Name": "stateless-markdown-to-docx",
+      "Calls": 3,
+      "Failures": 0,
+      "P50Milliseconds": 41.82,
+      "P95Milliseconds": 43.05,
+      "P99Milliseconds": 43.05,
+      "ThroughputPerSecond": 24.063720732499657
+    },
+    {
+      "Name": "large-document-5-pdf-exports",
+      "Calls": 5,
+      "Failures": 0,
+      "P50Milliseconds": 161.61,
+      "P95Milliseconds": 171.18,
+      "P99Milliseconds": 171.18,
+      "ThroughputPerSecond": 6.123176013021301
+    }
+  ]
+}

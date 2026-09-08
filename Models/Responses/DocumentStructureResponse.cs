@@ -61,17 +61,24 @@ public sealed class StyleInspection
     public TextStyleDefinition? Text { get; set; }
     public ParagraphStyleDefinition? Paragraph { get; set; }
     public CellStyleDefinition? Cell { get; set; }
+    public string? BasedOn { get; set; }
+    public string? FollowingStyle { get; set; }
+    public int UsageCount { get; set; }
+    public bool IsBuiltIn { get; set; }
 }
 
 public sealed class DocumentTablesResponse
 {
     public string SessionId { get; set; } = string.Empty;
+    public int TableCount { get; set; }
     public List<TableInspection> Tables { get; set; } = [];
 }
 
 public sealed class TableInspection
 {
     public string Id { get; set; } = string.Empty;
+    public int TableIndex { get; set; }
+    public int TableNumber { get; set; }
     public int SectionIndex { get; set; }
     public int BlockIndex { get; set; }
     public string? StyleName { get; set; }

@@ -36,11 +36,13 @@ public sealed partial class ServerTextControlDocumentEngine
 
         using (var tx = CreateServerTextControl())
         {
-            tx.Create();
-
             if (File.Exists(workingDocumentPath))
             {
-                tx.Load(workingDocumentPath, StreamType.InternalUnicodeFormat);
+                LoadWorkingDocument(tx, workingDocumentPath);
+            }
+            else
+            {
+                ResetDocument(tx);
             }
 
             var context = new DocumentOperationContext(
@@ -57,7 +59,7 @@ public sealed partial class ServerTextControlDocumentEngine
                 results.Add(handler.Apply(context, operation, i));
             }
 
-            tx.Save(workingDocumentPath, StreamType.InternalUnicodeFormat);
+            SaveWorkingDocument(tx, workingDocumentPath);
         }
 
         return new DocumentState

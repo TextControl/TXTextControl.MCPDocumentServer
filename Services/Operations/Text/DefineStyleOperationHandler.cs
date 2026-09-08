@@ -4,6 +4,7 @@ using System.Linq;
 using TxTextControl.McpServer.Models.DocumentModel;
 using TxTextControl.McpServer.Models.Requests;
 using TxTextControl.McpServer.Models.Responses;
+using TXTextControl;
 
 namespace TxTextControl.McpServer.Services.Operations;
 
@@ -15,10 +16,10 @@ public sealed class DefineStyleOperationHandler : IDocumentOperationHandler
     {
         Type = BasicTextCapabilityPack.DefineStyle,
         CapabilityPack = BasicTextCapabilityPack.PackName,
-        Description = "Defines or replaces a reusable paragraph formatting style.",
-        Intent = "Use only when the user explicitly asks to create, define, or change a style. Do not define styles for prompts without style instructions; configured defaults apply automatically.",
+        Description = "Creates a paragraph style or updates an existing named style in place so paragraphs linked to it immediately inherit the change.",
+        Intent = "Use when the user explicitly asks to create, define, or change a named style, for example 'change Heading 1 to red'. Unspecified style properties are preserved. Do not apply direct formatting to every paragraph using the style.",
         RequiredProperties = ["type", "style"],
-        OptionalProperties = [],
+        OptionalProperties = ["basedOn", "followingStyle"],
         Properties = new()
         {
             ["style.name"] = "Unique style name.",
@@ -28,7 +29,10 @@ public sealed class DefineStyleOperationHandler : IDocumentOperationHandler
             ["style.bold"] = "Optional bold flag. Send only when explicitly requested.",
             ["style.italic"] = "Optional italic flag. Send only when explicitly requested.",
             ["style.underline"] = "Optional underline flag. Send only when explicitly requested.",
-            ["style.colorHex"] = "Optional text color such as #1f2937. Send only when explicitly requested."
+            ["style.colorHex"] = "Optional text color such as #1f2937. Send only when explicitly requested.",
+            ["style.paragraph"] = "Optional paragraph-level properties including alignment, spacing, indents, pagination, and background.",
+            ["basedOn"] = "Optional base style for a newly created style.",
+            ["followingStyle"] = "Optional style used by a following paragraph."
         },
         Example = new()
         {
@@ -42,8 +46,8 @@ public sealed class DefineStyleOperationHandler : IDocumentOperationHandler
                 ["bold"] = true
             }
         },
-        ModelEffects = ["Adds or updates document.styles entry."],
-        RequiresTxExecution = false
+        ModelEffects = ["Adds or updates the native TX paragraph style and document.styles entry; linked paragraphs inherit the update."],
+        RequiresTxExecution = true
     };
 
     public OperationResult Apply(DocumentOperationContext context, DocumentOperation operation, int index)
@@ -58,14 +62,41 @@ public sealed class DefineStyleOperationHandler : IDocumentOperationHandler
             throw new ArgumentException("style.name is required for define_style.");
         }
 
-        var name = operation.Style.Name.Trim();
-        operation.Style.Name = name;
-        context.Styles[name] = operation.Style;
+        var requestedName = operation.Style.Name.Trim();
+        operation.Style.Name = requestedName;
+        var name = requestedName;
+        TextStyleDefinition storedStyle = operation.Style;
 
         if (context.TryGetTextControl(out var tx))
         {
-            DocumentOperationFormatter.ReplaceParagraphStyle(tx, operation.Style);
+            ParagraphStyle? existingStyle = DocumentOperationFormatter.FindParagraphStyle(tx, requestedName);
+            if (existingStyle is not null)
+            {
+                operation.Style.Name = existingStyle.Name;
+            }
+            if (existingStyle is not null && !string.IsNullOrWhiteSpace(operation.BasedOn))
+            {
+                string currentBase = existingStyle.BaseStyle?.Name ?? string.Empty;
+                string requestedBase = DocumentOperationFormatter.ResolveParagraphStyleName(tx, operation.BasedOn);
+                if (!string.Equals(currentBase, requestedBase, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException(
+                        $"Style '{existingStyle.Name}' already exists and its base style cannot be changed in place. " +
+                        "Create a new style with the requested base style instead.");
+                }
+            }
+
+            ParagraphStyle nativeStyle = DocumentOperationFormatter.EnsureParagraphStyle(
+                tx,
+                operation.Style,
+                operation.BasedOn,
+                operation.FollowingStyle);
+            name = nativeStyle.Name;
+            storedStyle = DocumentStyleUtilities.ToDefinition(nativeStyle);
         }
+
+        storedStyle.Name = name;
+        context.Styles[name] = storedStyle;
 
         var existing = context.Document.Styles.FirstOrDefault(style =>
             string.Equals(style.Name, name, StringComparison.OrdinalIgnoreCase));
@@ -76,19 +107,23 @@ public sealed class DefineStyleOperationHandler : IDocumentOperationHandler
             {
                 Name = name,
                 Type = "paragraph",
-                Text = operation.Style
+                BasedOn = operation.BasedOn,
+                Text = storedStyle,
+                Paragraph = storedStyle.Paragraph
             });
         }
         else
         {
-            existing.Text = operation.Style;
+            existing.BasedOn = operation.BasedOn ?? existing.BasedOn;
+            existing.Text = storedStyle;
+            existing.Paragraph = storedStyle.Paragraph;
         }
 
         return new OperationResult
         {
             Index = index,
             Type = Type,
-            Detail = $"Defined style '{name}'.",
+            Detail = $"Created or updated style '{name}'; paragraphs linked to it inherit the change.",
             TargetType = "style",
             TargetId = name,
             Location = $"styles['{name}']",

@@ -11,6 +11,6 @@ public sealed class RenderDocumentModelRequest
     [JsonPropertyName("createIfMissing")]
     public bool CreateIfMissing { get; set; } = true;
 
-    [JsonPropertyName("document")]
+    [JsonPropertyName("document"), JsonRequired]
     public Document? Document { get; set; }
 }

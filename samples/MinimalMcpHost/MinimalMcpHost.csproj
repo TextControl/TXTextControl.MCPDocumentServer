@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <McpPackageVersion Condition="'$(McpPackageVersion)' == ''">0.1.0-alpha.2</McpPackageVersion>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(UsePackageReferences)' != 'true'">
+    <ProjectReference Include="../../src/TXTextControl.McpServer/TXTextControl.McpServer.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(UsePackageReferences)' == 'true'">
+    <PackageReference Include="TXTextControl.McpServer" Version="$(McpPackageVersion)" />
+  </ItemGroup>
+</Project>

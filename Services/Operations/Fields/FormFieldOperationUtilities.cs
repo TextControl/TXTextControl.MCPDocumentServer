@@ -162,81 +162,6 @@ internal static class FormFieldOperationUtilities
         };
     }
 
-    public static void SetInsertionPoint(DocumentOperationContext context, ServerTextControl tx, DocumentOperation operation)
-    {
-        var hasTableTarget = !string.IsNullOrWhiteSpace(operation.TableId)
-                             || operation.RowIndex.HasValue
-                             || operation.ColumnIndex.HasValue;
-        if (!hasTableTarget)
-        {
-            tx.Selection = new Selection((tx.Text ?? string.Empty).Length, 0);
-            return;
-        }
-
-        var table = TableOperationUtilities.GetTxTable(tx, TableOperationUtilities.RequireTableId(operation.TableId));
-        var cell = TableOperationUtilities.GetTxCell(
-            table,
-            TableOperationUtilities.RequireIndex(operation.RowIndex, nameof(operation.RowIndex)),
-            TableOperationUtilities.RequireIndex(operation.ColumnIndex, nameof(operation.ColumnIndex)));
-
-        var placement = ResolvePlacement(operation.Placement);
-        if (placement == FormFieldPlacement.Replace)
-        {
-            cell.Text = string.Empty;
-        }
-
-        var offset = placement switch
-        {
-            FormFieldPlacement.Start or FormFieldPlacement.Replace => 0,
-            FormFieldPlacement.End => cell.Text?.Length ?? 0,
-            _ => 0
-        };
-        tx.Selection = new Selection(Math.Max(0, cell.Start - 1 + offset), 0);
-    }
-
-    public static void AddModelField(DocumentOperationContext context, DocumentOperation operation, DocumentModel.DocumentBlock fieldBlock)
-    {
-        var hasTableTarget = !string.IsNullOrWhiteSpace(operation.TableId)
-                             || operation.RowIndex.HasValue
-                             || operation.ColumnIndex.HasValue;
-        if (!hasTableTarget)
-        {
-            context.GetMainSection().Blocks.Add(fieldBlock);
-            return;
-        }
-
-        var table = TableOperationUtilities.GetModelTable(context.Document, TableOperationUtilities.RequireTableId(operation.TableId).ToString(CultureInfo.InvariantCulture));
-        var cell = TableOperationUtilities.GetModelCell(
-            table,
-            TableOperationUtilities.RequireIndex(operation.RowIndex, nameof(operation.RowIndex)),
-            TableOperationUtilities.RequireIndex(operation.ColumnIndex, nameof(operation.ColumnIndex)));
-
-        var placement = ResolvePlacement(operation.Placement);
-        if (placement == FormFieldPlacement.Replace)
-        {
-            cell.Blocks.Clear();
-        }
-
-        if (placement == FormFieldPlacement.Start)
-        {
-            cell.Blocks.Insert(0, fieldBlock);
-        }
-        else
-        {
-            cell.Blocks.Add(fieldBlock);
-        }
-    }
-
-    public static string Location(DocumentOperation operation)
-    {
-        var hasTableTarget = !string.IsNullOrWhiteSpace(operation.TableId)
-                             || operation.RowIndex.HasValue
-                             || operation.ColumnIndex.HasValue;
-        return hasTableTarget
-            ? $"tables['{operation.TableId}'].rows[{operation.RowIndex}].cells[{operation.ColumnIndex}].blocks"
-            : "sections[0].blocks";
-    }
-
     public static string ToTxTypeName(string type)
         => type switch
         {
@@ -293,26 +218,4 @@ internal static class FormFieldOperationUtilities
     private static string NormalizeDateText(string? value)
         => ParseDate(value).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
-    private static FormFieldPlacement ResolvePlacement(string? placement)
-    {
-        if (string.IsNullOrWhiteSpace(placement))
-        {
-            return FormFieldPlacement.End;
-        }
-
-        return placement.Trim().ToLowerInvariant() switch
-        {
-            "end" => FormFieldPlacement.End,
-            "start" => FormFieldPlacement.Start,
-            "replace" => FormFieldPlacement.Replace,
-            _ => throw new ArgumentException("placement must be 'end', 'start', or 'replace'.")
-        };
-    }
-
-    private enum FormFieldPlacement
-    {
-        End,
-        Start,
-        Replace
-    }
 }

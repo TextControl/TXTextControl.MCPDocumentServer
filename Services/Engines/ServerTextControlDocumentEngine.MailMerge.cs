@@ -26,21 +26,25 @@ public sealed partial class ServerTextControlDocumentEngine
         }
 
         using var tx = CreateServerTextControl();
-        tx.Create();
-        tx.Load(workingDocumentPath, StreamType.InternalUnicodeFormat, CreateTemplateLoadSettings());
+        LoadWorkingDocument(tx, workingDocumentPath, templateSettings: true);
 
-        return tx.ApplicationFields
-            .Cast<ApplicationField>()
-            .Where(field => string.Equals(field.TypeName, "MERGEFIELD", StringComparison.OrdinalIgnoreCase))
-            .Select(field => new TemplateMergeFieldInfo
-            {
-                Name = field.Parameters.Length > 0 ? field.Parameters[0] : string.Empty,
-                Text = field.Text ?? string.Empty,
-                TypeName = field.TypeName ?? string.Empty,
-                Parameters = field.Parameters.ToList()
-            })
-            .ToList();
+        return ReadTemplateMergeFields(tx);
     }
+
+    private static IReadOnlyList<TemplateMergeFieldInfo> ReadTemplateMergeFields(ServerTextControl tx)
+        => EnumerateTemplateFieldContainers(tx)
+            .SelectMany(container => container.Content.ApplicationFields
+                .Cast<ApplicationField>()
+                .Where(field => string.Equals(field.TypeName, "MERGEFIELD", StringComparison.OrdinalIgnoreCase))
+                .Select(field => new TemplateMergeFieldInfo
+                {
+                    Name = field.Parameters.Length > 0 ? field.Parameters[0] : string.Empty,
+                    Text = field.Text ?? string.Empty,
+                    TypeName = field.TypeName ?? string.Empty,
+                    Parameters = field.Parameters.ToList(),
+                    Location = container.Location
+                }))
+            .ToList();
 
     public IReadOnlyList<TemplateMergeBlockInfo> GetTemplateMergeBlocks(string workingDocumentPath)
     {
@@ -55,10 +59,13 @@ public sealed partial class ServerTextControlDocumentEngine
         }
 
         using var tx = CreateServerTextControl();
-        tx.Create();
-        tx.Load(workingDocumentPath, StreamType.InternalUnicodeFormat, CreateTemplateLoadSettings());
+        LoadWorkingDocument(tx, workingDocumentPath, templateSettings: true);
 
-        return tx.SubTextParts
+        return ReadTemplateMergeBlocks(tx);
+    }
+
+    private static IReadOnlyList<TemplateMergeBlockInfo> ReadTemplateMergeBlocks(ServerTextControl tx)
+        => tx.SubTextParts
             .Cast<SubTextPart>()
             .Where(part => part.Name.StartsWith("txmb_", StringComparison.OrdinalIgnoreCase))
             .Select(part => new TemplateMergeBlockInfo
@@ -71,7 +78,6 @@ public sealed partial class ServerTextControlDocumentEngine
                 TextPreview = Preview(part.Text)
             })
             .ToList();
-    }
 
     public IReadOnlyList<TemplateFormFieldInfo> GetTemplateFormFields(string workingDocumentPath)
     {
@@ -86,16 +92,39 @@ public sealed partial class ServerTextControlDocumentEngine
         }
 
         using var tx = CreateServerTextControl();
-        tx.Create();
-        tx.Load(workingDocumentPath, StreamType.InternalUnicodeFormat, CreateTemplateLoadSettings());
+        LoadWorkingDocument(tx, workingDocumentPath, templateSettings: true);
 
-        return tx.FormFields
-            .Cast<FormField>()
-            .Select(ToTemplateFormFieldInfo)
-            .ToList();
+        return ReadTemplateFormFields(tx);
     }
 
-    public DocumentState MergeTemplate(
+    private static IReadOnlyList<TemplateFormFieldInfo> ReadTemplateFormFields(ServerTextControl tx)
+        => EnumerateTemplateFieldContainers(tx)
+            .SelectMany(container => container.Content.FormFields
+                .Cast<FormField>()
+                .Select(field => ToTemplateFormFieldInfo(field, container.Location)))
+            .ToList();
+
+    public TemplateContentSnapshot GetTemplateContentSnapshot(string workingDocumentPath)
+    {
+        if (string.IsNullOrWhiteSpace(workingDocumentPath))
+        {
+            throw new ArgumentException("A working document path is required.", nameof(workingDocumentPath));
+        }
+
+        if (!File.Exists(workingDocumentPath))
+        {
+            throw new FileNotFoundException("The working document was not found.", workingDocumentPath);
+        }
+
+        using var tx = CreateServerTextControl();
+        LoadWorkingDocument(tx, workingDocumentPath, templateSettings: true);
+        return new TemplateContentSnapshot(
+            ReadTemplateMergeFields(tx),
+            ReadTemplateMergeBlocks(tx),
+            ReadTemplateFormFields(tx));
+    }
+
+    public MergeTemplateEngineResult MergeTemplate(
         string workingDocumentPath,
         DocumentState state,
         MergeTemplateRequest request)
@@ -118,8 +147,9 @@ public sealed partial class ServerTextControlDocumentEngine
         var jsonData = ResolveJsonData(request);
 
         using var tx = CreateServerTextControl();
-        tx.Create();
-        tx.Load(workingDocumentPath, StreamType.InternalUnicodeFormat, CreateTemplateLoadSettings());
+        LoadWorkingDocument(tx, workingDocumentPath, templateSettings: true);
+        IReadOnlyList<TemplateMergeFieldInfo> fieldsBefore = ReadTemplateMergeFields(tx);
+        IReadOnlyList<TemplateFormFieldInfo> formFieldsBefore = ReadTemplateFormFields(tx);
 
         using (var mailMerge = new MailMerge { TextComponent = tx })
         {
@@ -137,9 +167,11 @@ public sealed partial class ServerTextControlDocumentEngine
             mailMerge.MergeJsonData(jsonData, request.Append);
         }
 
-        tx.Save(workingDocumentPath, StreamType.InternalUnicodeFormat);
+        IReadOnlyList<TemplateMergeFieldInfo> fieldsAfter = ReadTemplateMergeFields(tx);
+        IReadOnlyList<TemplateFormFieldInfo> formFieldsAfter = ReadTemplateFormFields(tx);
+        SaveWorkingDocument(tx, workingDocumentPath);
 
-        return new DocumentState
+        var updatedState = new DocumentState
         {
             WorkingDocumentPath = workingDocumentPath,
             Document = state.Document,
@@ -164,16 +196,24 @@ public sealed partial class ServerTextControlDocumentEngine
                 }
             ]
         };
+
+        return new MergeTemplateEngineResult(
+            updatedState,
+            fieldsBefore,
+            fieldsAfter,
+            formFieldsBefore,
+            formFieldsAfter);
     }
 
-    private static TemplateFormFieldInfo ToTemplateFormFieldInfo(FormField field)
+    private static TemplateFormFieldInfo ToTemplateFormFieldInfo(FormField field, string location)
     {
         var info = new TemplateFormFieldInfo
         {
             Name = field.Name ?? string.Empty,
             Type = ResolveFormFieldType(field),
             Text = field.Text ?? string.Empty,
-            Enabled = field.Enabled
+            Enabled = field.Enabled,
+            Location = location
         };
 
         switch (field)
@@ -191,6 +231,34 @@ public sealed partial class ServerTextControlDocumentEngine
         }
 
         return info;
+    }
+
+    private static IEnumerable<(IFormattedText Content, string Location)> EnumerateTemplateFieldContainers(ServerTextControl tx)
+    {
+        yield return (tx, "body");
+        var types = new[]
+        {
+            HeaderFooterType.Header, HeaderFooterType.Footer,
+            HeaderFooterType.FirstPageHeader, HeaderFooterType.FirstPageFooter,
+            HeaderFooterType.EvenHeader, HeaderFooterType.EvenFooter
+        };
+        foreach (HeaderFooterType type in types)
+        {
+            HeaderFooter? item = tx.HeadersAndFooters.GetItem(type);
+            if (item is not null)
+            {
+                yield return (item, type switch
+                {
+                    HeaderFooterType.Header => "sections[0].header",
+                    HeaderFooterType.Footer => "sections[0].footer",
+                    HeaderFooterType.FirstPageHeader => "sections[0].firstPageHeader",
+                    HeaderFooterType.FirstPageFooter => "sections[0].firstPageFooter",
+                    HeaderFooterType.EvenHeader => "sections[0].evenHeader",
+                    HeaderFooterType.EvenFooter => "sections[0].evenFooter",
+                    _ => "sections[0].headerFooter"
+                });
+            }
+        }
     }
 
     private static string ResolveFormFieldType(FormField field)

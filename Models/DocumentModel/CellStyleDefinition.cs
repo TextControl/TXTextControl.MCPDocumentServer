@@ -9,6 +9,27 @@ public sealed class CellStyleDefinition
 
     [JsonPropertyName("border")]
     public CellBorderDefinition? Border { get; set; }
+
+    [JsonPropertyName("paddingLeft")]
+    public float? PaddingLeft { get; set; }
+
+    [JsonPropertyName("paddingRight")]
+    public float? PaddingRight { get; set; }
+
+    [JsonPropertyName("paddingTop")]
+    public float? PaddingTop { get; set; }
+
+    [JsonPropertyName("paddingBottom")]
+    public float? PaddingBottom { get; set; }
+
+    [JsonPropertyName("paddingUnit")]
+    public string PaddingUnit { get; set; } = "pt";
+
+    [JsonPropertyName("horizontalAlignment")]
+    public string? HorizontalAlignment { get; set; }
+
+    [JsonPropertyName("verticalAlignment")]
+    public string? VerticalAlignment { get; set; }
 }
 
 public sealed class CellBorderDefinition

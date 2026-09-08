@@ -51,24 +51,27 @@ public sealed class UpdateMergeFieldOperationHandler : IDocumentOperationHandler
 
         if (context.TryGetTextControl(out var tx))
         {
-            foreach (ApplicationField field in tx.ApplicationFields)
+            foreach (FieldContainer container in FieldInsertionUtilities.EnumerateFieldContainers(tx))
             {
-                if (!IsMatchingMergeField(field, fieldName))
+                foreach (ApplicationField field in container.Content.ApplicationFields)
                 {
-                    continue;
-                }
+                    if (!IsMatchingMergeField(field, fieldName))
+                    {
+                        continue;
+                    }
 
-                if (replacementText is not null)
-                {
-                    field.Text = replacementText;
-                }
+                    if (replacementText is not null)
+                    {
+                        field.Text = replacementText;
+                    }
 
-                if (replacementParameters is not null)
-                {
-                    field.Parameters = replacementParameters.ToArray();
-                }
+                    if (replacementParameters is not null)
+                    {
+                        field.Parameters = replacementParameters.ToArray();
+                    }
 
-                updatedCount++;
+                    updatedCount++;
+                }
             }
         }
 
@@ -86,6 +89,11 @@ public sealed class UpdateMergeFieldOperationHandler : IDocumentOperationHandler
 
             field.Properties["typeName"] = "MERGEFIELD";
             field.Properties["parameters"] = string.Join("|", replacementParameters ?? [replacementName]);
+        }
+
+        if (updatedCount == 0 && updatedFieldIds.Count == 0)
+        {
+            throw new ArgumentException($"No MERGEFIELD named '{fieldName}' was found. Inspect template fields and retry with an existing field name.");
         }
 
         return new OperationResult
@@ -112,7 +120,16 @@ public sealed class UpdateMergeFieldOperationHandler : IDocumentOperationHandler
            && string.Equals(field.Parameters[0], fieldName, StringComparison.OrdinalIgnoreCase);
 
     private static IEnumerable<DocumentModel.Field> EnumerateModelFields(DocumentModel.Document document)
-        => document.Sections.SelectMany(section => EnumerateBlockFields(section.Blocks));
+    {
+        foreach (DocumentModel.Section section in document.Sections)
+        {
+            foreach (DocumentModel.Field field in EnumerateBlockFields(section.Blocks)) yield return field;
+            if (section.Header is not null)
+                foreach (DocumentModel.Field field in EnumerateBlockFields(section.Header.Blocks)) yield return field;
+            if (section.Footer is not null)
+                foreach (DocumentModel.Field field in EnumerateBlockFields(section.Footer.Blocks)) yield return field;
+        }
+    }
 
     private static IEnumerable<DocumentModel.Field> EnumerateBlockFields(IEnumerable<DocumentModel.DocumentBlock> blocks)
     {

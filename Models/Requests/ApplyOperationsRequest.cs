@@ -11,6 +11,6 @@ public sealed class ApplyOperationsRequest
     [JsonPropertyName("createIfMissing")]
     public bool CreateIfMissing { get; set; } = true;
 
-    [JsonPropertyName("operations")]
+    [JsonPropertyName("operations"), JsonRequired]
     public List<DocumentOperation> Operations { get; set; } = [];
 }

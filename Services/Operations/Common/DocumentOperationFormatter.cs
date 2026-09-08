@@ -1,5 +1,6 @@
 using System;
 using System.Drawing;
+using System.Linq;
 using TxTextControl.McpServer.Models.DocumentModel;
 using TXTextControl;
 
@@ -7,7 +8,11 @@ namespace TxTextControl.McpServer.Services.Operations;
 
 internal static class DocumentOperationFormatter
 {
-    public static void EnsureParagraphStyle(ServerTextControl textControl, TextStyleDefinition style)
+    public static ParagraphStyle EnsureParagraphStyle(
+        ServerTextControl textControl,
+        TextStyleDefinition style,
+        string? basedOn = null,
+        string? followingStyle = null)
     {
         if (string.IsNullOrWhiteSpace(style.Name))
         {
@@ -15,35 +20,47 @@ internal static class DocumentOperationFormatter
         }
 
         var name = style.Name.Trim();
-        var paragraphStyle = textControl.ParagraphStyles.GetItem(name);
+        var paragraphStyle = textControl.ParagraphStyles
+            .Cast<ParagraphStyle>()
+            .FirstOrDefault(candidate => string.Equals(candidate.Name, name, StringComparison.Ordinal));
         if (paragraphStyle is null)
         {
-            paragraphStyle = new ParagraphStyle(name);
+            ParagraphStyle? baseStyle = string.IsNullOrWhiteSpace(basedOn)
+                ? null
+                : FindParagraphStyle(textControl, basedOn);
+            if (!string.IsNullOrWhiteSpace(basedOn) && baseStyle is null)
+            {
+                throw new InvalidOperationException($"Base style '{basedOn}' was not found.");
+            }
+
+            paragraphStyle = baseStyle is null
+                ? new ParagraphStyle(name)
+                : new ParagraphStyle(name, baseStyle.Name);
             ApplyStyle(paragraphStyle, style);
+            ApplyParagraphStyle(paragraphStyle.ParagraphFormat, style.Paragraph);
+            if (!string.IsNullOrWhiteSpace(followingStyle))
+            {
+                paragraphStyle.FollowingStyle = ResolveParagraphStyleName(textControl, followingStyle);
+            }
             textControl.ParagraphStyles.Add(paragraphStyle);
-            return;
+            return paragraphStyle;
         }
 
         ApplyStyle(paragraphStyle, style);
-    }
-
-    public static void ReplaceParagraphStyle(ServerTextControl textControl, TextStyleDefinition style)
-    {
-        if (string.IsNullOrWhiteSpace(style.Name))
+        ApplyParagraphStyle(paragraphStyle.ParagraphFormat, style.Paragraph);
+        if (!string.IsNullOrWhiteSpace(followingStyle))
         {
-            throw new ArgumentException("style.name is required.");
+            paragraphStyle.FollowingStyle = ResolveParagraphStyleName(textControl, followingStyle);
         }
 
-        var name = style.Name.Trim();
-        if (textControl.ParagraphStyles.GetItem(name) is not null)
-        {
-            textControl.ParagraphStyles.Remove(name);
-        }
-
-        var paragraphStyle = new ParagraphStyle(name);
-        ApplyStyle(paragraphStyle, style);
-        textControl.ParagraphStyles.Add(paragraphStyle);
+        // TX returns an editable copy for an existing style. Apply commits the
+        // changes to the document and propagates them to linked paragraphs.
+        paragraphStyle.Apply();
+        return paragraphStyle;
     }
+
+    public static ParagraphStyle ReplaceParagraphStyle(ServerTextControl textControl, TextStyleDefinition style)
+        => EnsureParagraphStyle(textControl, style);
 
     public static void ApplyStyle(Selection selection, TextStyleDefinition style)
     {
@@ -77,13 +94,28 @@ internal static class DocumentOperationFormatter
             selection.Underline = style.Underline.Value ? FontUnderlineStyle.Single : FontUnderlineStyle.None;
         }
 
+        if (style.Strikeout.HasValue)
+        {
+            selection.Strikeout = style.Strikeout.Value;
+        }
+
         if (!string.IsNullOrWhiteSpace(style.ColorHex))
         {
             selection.ForeColor = ParseHexColor(style.ColorHex);
         }
+
+        if (!string.IsNullOrWhiteSpace(style.BackgroundColorHex))
+        {
+            selection.TextBackColor = ParseHexColor(style.BackgroundColorHex);
+        }
+
+        ApplyExtendedCharacterStyle(selection, style);
     }
 
-    public static void ApplyCellStyle(TXTextControl.TableCell cell, CellStyleDefinition style)
+    public static void ApplyCellStyle(
+        ServerTextControl textControl,
+        TXTextControl.TableCell cell,
+        CellStyleDefinition style)
     {
         var cellFormat = cell.CellFormat;
         if (!string.IsNullOrWhiteSpace(style.BackgroundColorHex))
@@ -96,12 +128,58 @@ internal static class DocumentOperationFormatter
             ApplyBorderStyle(cellFormat, style.Border);
         }
 
+        if (style.PaddingLeft.HasValue)
+        {
+            cellFormat.LeftTextDistance = ToCellTwips(style.PaddingLeft.Value, style.PaddingUnit);
+        }
+
+        if (style.PaddingRight.HasValue)
+        {
+            cellFormat.RightTextDistance = ToCellTwips(style.PaddingRight.Value, style.PaddingUnit);
+        }
+
+        if (style.PaddingTop.HasValue)
+        {
+            cellFormat.TopTextDistance = ToCellTwips(style.PaddingTop.Value, style.PaddingUnit);
+        }
+
+        if (style.PaddingBottom.HasValue)
+        {
+            cellFormat.BottomTextDistance = ToCellTwips(style.PaddingBottom.Value, style.PaddingUnit);
+        }
+
+        if (!string.IsNullOrWhiteSpace(style.VerticalAlignment))
+        {
+            cellFormat.VerticalAlignment = ResolveVerticalAlignment(style.VerticalAlignment);
+        }
+
         cell.CellFormat = cellFormat;
+
+        if (!string.IsNullOrWhiteSpace(style.HorizontalAlignment))
+        {
+            cell.Select();
+            var selection = textControl.Selection;
+            var paragraphFormat = selection.ParagraphFormat;
+            paragraphFormat.Alignment = ResolveAlignment(style.HorizontalAlignment);
+            selection.ParagraphFormat = paragraphFormat;
+            textControl.Selection = selection;
+        }
     }
 
     public static void ApplyParagraphStyle(TXTextControl.Paragraph paragraph, ParagraphStyleDefinition style)
     {
         var format = paragraph.Format;
+        ApplyParagraphStyle(format, style);
+        paragraph.Format = format;
+    }
+
+    public static void ApplyParagraphStyle(ParagraphFormat format, ParagraphStyleDefinition? style)
+    {
+        if (style is null)
+        {
+            return;
+        }
+
         if (style.SpaceBefore.HasValue)
         {
             format.TopDistance = ToParagraphTwips(style.SpaceBefore.Value, style.Unit);
@@ -117,7 +195,64 @@ internal static class DocumentOperationFormatter
             format.Alignment = ResolveAlignment(style.Alignment);
         }
 
-        paragraph.Format = format;
+        if (style.LineSpacing.HasValue)
+        {
+            if (style.LineSpacing.Value <= 0)
+            {
+                throw new ArgumentException("paragraph.lineSpacing must be greater than 0.");
+            }
+
+            float percentage = style.LineSpacing.Value <= 10
+                ? style.LineSpacing.Value * 100
+                : style.LineSpacing.Value;
+            format.LineSpacing = (int)Math.Round(percentage);
+        }
+
+        if (style.AbsoluteLineSpacing.HasValue)
+        {
+            if (style.AbsoluteLineSpacing.Value <= 0)
+            {
+                throw new ArgumentException("paragraph.absoluteLineSpacing must be greater than 0.");
+            }
+            format.AbsoluteLineSpacing = ToParagraphTwips(style.AbsoluteLineSpacing.Value, style.Unit);
+        }
+
+        if (style.LeftIndent.HasValue)
+        {
+            format.LeftIndent = ToParagraphTwips(style.LeftIndent.Value, style.Unit);
+        }
+        if (style.RightIndent.HasValue)
+        {
+            format.RightIndent = ToParagraphTwips(style.RightIndent.Value, style.Unit);
+        }
+        if (style.HangingIndent.HasValue)
+        {
+            format.HangingIndent = ToSignedTwips(style.HangingIndent.Value, style.Unit);
+        }
+        if (!string.IsNullOrWhiteSpace(style.BackgroundColorHex))
+        {
+            format.BackColor = ParseHexColor(style.BackgroundColorHex);
+        }
+        if (style.KeepLinesTogether.HasValue)
+        {
+            format.KeepLinesTogether = style.KeepLinesTogether.Value;
+        }
+        if (style.KeepWithNext.HasValue)
+        {
+            format.KeepWithNext = style.KeepWithNext.Value;
+        }
+        if (style.PageBreakBefore.HasValue)
+        {
+            format.PageBreakBefore = style.PageBreakBefore.Value;
+        }
+        if (style.WidowOrphanLines.HasValue)
+        {
+            if (style.WidowOrphanLines.Value < 0)
+            {
+                throw new ArgumentException("paragraph.widowOrphanLines must be >= 0.");
+            }
+            format.WidowOrphanLines = style.WidowOrphanLines.Value;
+        }
     }
 
     private static void ApplyBorderStyle(TableCellFormat cellFormat, CellBorderDefinition border)
@@ -205,11 +340,103 @@ internal static class DocumentOperationFormatter
             formattingStyle.Underline = style.Underline.Value ? FontUnderlineStyle.Single : FontUnderlineStyle.None;
         }
 
+        if (style.Strikeout.HasValue)
+        {
+            formattingStyle.Strikeout = style.Strikeout.Value;
+        }
+
         if (!string.IsNullOrWhiteSpace(style.ColorHex))
         {
             formattingStyle.ForeColor = ParseHexColor(style.ColorHex);
         }
+
+        if (!string.IsNullOrWhiteSpace(style.BackgroundColorHex))
+        {
+            formattingStyle.TextBackColor = ParseHexColor(style.BackgroundColorHex);
+        }
+
+        ApplyExtendedCharacterStyle(formattingStyle, style);
     }
+
+    private static void ApplyExtendedCharacterStyle(FormattingStyle target, TextStyleDefinition style)
+    {
+        if (style.CharacterSpacing.HasValue)
+        {
+            target.CharacterSpacing = ToSignedTwips(style.CharacterSpacing.Value, style.FontSizeUnit);
+        }
+        if (style.CharacterScaling.HasValue)
+        {
+            if (style.CharacterScaling.Value <= 0)
+            {
+                throw new ArgumentException("characterScaling must be greater than 0.");
+            }
+            target.CharacterScaling = style.CharacterScaling.Value;
+        }
+        if (style.Baseline.HasValue)
+        {
+            target.AutoBaseline = AutoBaseline.None;
+            target.Baseline = ToSignedTwips(style.Baseline.Value, style.FontSizeUnit);
+        }
+        if (!string.IsNullOrWhiteSpace(style.Capitals))
+        {
+            target.Capitals = ResolveCapitals(style.Capitals);
+        }
+    }
+
+    private static void ApplyExtendedCharacterStyle(Selection target, TextStyleDefinition style)
+    {
+        if (style.CharacterSpacing.HasValue)
+        {
+            target.CharacterSpacing = ToSignedTwips(style.CharacterSpacing.Value, style.FontSizeUnit);
+        }
+        if (style.CharacterScaling.HasValue)
+        {
+            if (style.CharacterScaling.Value <= 0)
+            {
+                throw new ArgumentException("characterScaling must be greater than 0.");
+            }
+            target.CharacterScaling = style.CharacterScaling.Value;
+        }
+        if (style.Baseline.HasValue)
+        {
+            target.AutoBaseline = AutoBaseline.None;
+            target.Baseline = ToSignedTwips(style.Baseline.Value, style.FontSizeUnit);
+        }
+        if (!string.IsNullOrWhiteSpace(style.Capitals))
+        {
+            target.Capitals = ResolveCapitals(style.Capitals);
+        }
+    }
+
+    public static ParagraphStyle? FindParagraphStyle(ServerTextControl textControl, string styleName)
+    {
+        if (string.IsNullOrWhiteSpace(styleName))
+        {
+            return null;
+        }
+
+        string requested = styleName.Trim();
+        ParagraphStyle? exact = textControl.ParagraphStyles.GetItem(requested);
+        if (exact is not null)
+        {
+            return exact;
+        }
+
+        string normalized = NormalizeStyleName(requested);
+        var matches = textControl.ParagraphStyles
+            .Cast<ParagraphStyle>()
+            .Where(style => NormalizeStyleName(style.Name) == normalized)
+            .Take(2)
+            .ToList();
+        return matches.Count == 1 ? matches[0] : null;
+    }
+
+    public static string ResolveParagraphStyleName(ServerTextControl textControl, string styleName)
+        => FindParagraphStyle(textControl, styleName)?.Name
+           ?? throw new InvalidOperationException($"Style '{styleName}' was not found.");
+
+    private static string NormalizeStyleName(string value)
+        => string.Concat(value.Where(char.IsLetterOrDigit)).ToUpperInvariant();
 
     private static float ToPoints(float value, string? unit)
     {
@@ -245,8 +472,51 @@ internal static class DocumentOperationFormatter
         {
             "left" => HorizontalAlignment.Left,
             "right" => HorizontalAlignment.Right,
-            _ => throw new ArgumentException("paragraph.alignment must be 'left' or 'right'.")
+            "center" or "centered" => HorizontalAlignment.Center,
+            "justify" or "justified" => HorizontalAlignment.Justify,
+            _ => throw new ArgumentException("alignment must be 'left', 'right', 'center', or 'justify'.")
         };
+
+    private static VerticalAlignment ResolveVerticalAlignment(string alignment)
+        => alignment.Trim().ToLowerInvariant() switch
+        {
+            "top" => VerticalAlignment.Top,
+            "center" or "centered" or "middle" => VerticalAlignment.Center,
+            "bottom" => VerticalAlignment.Bottom,
+            _ => throw new ArgumentException("verticalAlignment must be 'top', 'center', or 'bottom'.")
+        };
+
+    private static Capitals ResolveCapitals(string capitals)
+        => capitals.Trim().ToLowerInvariant() switch
+        {
+            "none" or "normal" => Capitals.None,
+            "capitals" or "allcaps" or "all-caps" => Capitals.Capitals,
+            "smallcapitals" or "smallcaps" or "small-caps" => Capitals.SmallCapitals,
+            "petitecapitals" or "petitecaps" or "petite-caps" => Capitals.PetiteCapitals,
+            _ => throw new ArgumentException("capitals must be none, capitals, smallCapitals, or petiteCapitals.")
+        };
+
+    private static int ToCellTwips(float value, string? unit)
+    {
+        if (value < 0)
+        {
+            throw new ArgumentException("Cell padding values must be >= 0.");
+        }
+
+        var normalized = string.IsNullOrWhiteSpace(unit) ? "pt" : unit.Trim().ToLowerInvariant();
+        var points = normalized switch
+        {
+            "pt" or "point" or "points" => value,
+            "px" or "pixel" or "pixels" => value * 72f / 96f,
+            "in" or "inch" or "inches" => value * 72f,
+            "cm" or "centimeter" or "centimeters" => value * 72f / 2.54f,
+            "mm" or "millimeter" or "millimeters" => value * 72f / 25.4f,
+            "twip" or "twips" => value / 20f,
+            _ => throw new ArgumentException("paddingUnit must be pt, px, in, cm, mm, or twips.")
+        };
+
+        return (int)Math.Round(points * 20f);
+    }
 
     private static int ToParagraphTwips(float value, string? unit)
     {
@@ -263,6 +533,18 @@ internal static class DocumentOperationFormatter
             _ => throw new ArgumentException("paragraph.unit must be 'pt' or 'px'.")
         };
 
+        return (int)Math.Round(points * 20f);
+    }
+
+    private static int ToSignedTwips(float value, string? unit)
+    {
+        var normalized = string.IsNullOrWhiteSpace(unit) ? "pt" : unit.Trim().ToLowerInvariant();
+        float points = normalized switch
+        {
+            "pt" or "point" or "points" => value,
+            "px" or "pixel" or "pixels" => value * 72f / 96f,
+            _ => throw new ArgumentException("The unit must be 'pt' or 'px'.")
+        };
         return (int)Math.Round(points * 20f);
     }
 }

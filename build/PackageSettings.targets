@@ -1,0 +1,56 @@
+<Project>
+  <PropertyGroup>
+    <TextControlSigningKeyFile Condition="'$(TextControlSigningKeyFile)' == ''">$(MSBuildThisFileDirectory)signing/textcontrol.snk</TextControlSigningKeyFile>
+    <TextControlPublicKey>00240000048000009400000006020000002400005253413100040000010001003303f330bb679629dacfcf3a470475dac9dc538800e6f137c8385867c9bd864d80d4af75c2674aa62065c8937944ccce901d1ed51e2c32f79c7d16e47f9e529b8dfb08c6107b2d4d90b3d558089b31ce9b0ca26f683c4f16dd50905cad7ddfe0988f3f5a57fe94b483f286f5c9022c48e404dba10cc12646a408496bfa4ffb92</TextControlPublicKey>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(IsTextControlPackage)' == 'true'">
+    <IsPackable>true</IsPackable>
+    <Authors>Text Control GmbH</Authors>
+    <Company>Text Control</Company>
+    <Copyright>Copyright 2026 Text Control GmbH and Text Control, LLC</Copyright>
+    <PackageProjectUrl>https://www.textcontrol.com/</PackageProjectUrl>
+    <PackageIcon>tx34.png</PackageIcon>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageLicenseFile>LICENSE.txt</PackageLicenseFile>
+    <PackageRequireLicenseAcceptance>true</PackageRequireLicenseAcceptance>
+    <PackageReleaseNotes>Initial preview of the TX Text Control MCP server hosting library. APIs may change before a stable release. Requires use with appropriately licensed TX Text Control products.</PackageReleaseNotes>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <IncludeSource>false</IncludeSource>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(IsTextControlPackage)' == 'true' or '$(IsTextControlFriendTest)' == 'true'">
+    <SignAssembly>true</SignAssembly>
+    <AssemblyOriginatorKeyFile>$(TextControlSigningKeyFile)</AssemblyOriginatorKeyFile>
+    <DelaySign>false</DelaySign>
+    <PublicSign>false</PublicSign>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(IsTextControlPackage)' == 'true'">
+    <None Include="$(MSBuildThisFileDirectory)assets/tx34.png" Pack="true" PackagePath="tx34.png" Visible="false" />
+    <None Include="$(MSBuildThisFileDirectory)../LICENSE.txt" Pack="true" PackagePath="LICENSE.txt" Visible="false" />
+    <None Update="README.md" Pack="true" PackagePath="README.md" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(ExposeMcpTestInternals)' == 'true'">
+    <InternalsVisibleTo Include="TxTextControl.McpServer.Tests" Key="$(TextControlPublicKey)" />
+  </ItemGroup>
+  <!-- Private key material is never package content or a deployment asset. -->
+  <ItemGroup>
+    <None Update="**/*.snk" Pack="false" CopyToOutputDirectory="Never" CopyToPublishDirectory="Never" />
+    <Content Update="**/*.snk" Pack="false" CopyToOutputDirectory="Never" CopyToPublishDirectory="Never" />
+  </ItemGroup>
+
+  <Target Name="ValidateTextControlSigningKey" BeforeTargets="CoreCompile"
+          Condition="'$(IsTextControlPackage)' == 'true' or '$(IsTextControlFriendTest)' == 'true'">
+    <Error Condition="!Exists('$(TextControlSigningKeyFile)')"
+           Text="The Text Control signing key is missing. Provision build/signing/textcontrol.snk securely or pass -p:TextControlSigningKeyFile=/secure/path/textcontrol.snk. Never commit or package the private key." />
+  </Target>
+  <Target Name="ValidateTextControlPackageMetadata" BeforeTargets="GenerateNuspec" Condition="'$(IsTextControlPackage)' == 'true'">
+    <Error Condition="'$(Description)' == '' or '$(PackageId)' == '' or '$(PackageTags)' == ''" Text="Text Control packages require a package ID, description and tags." />
+    <Error Condition="!Exists('$(MSBuildProjectDirectory)/README.md')" Text="Each Text Control package requires its own public README.md." />
+    <Error Condition="!Exists('$(MSBuildThisFileDirectory)assets/tx34.png') or !Exists('$(MSBuildThisFileDirectory)../LICENSE.txt')" Text="The shared package icon or license is missing." />
+    <Error Condition="'$(SignAssembly)' != 'true' or '$(PublicSign)' == 'true' or '$(DelaySign)' == 'true'" Text="Text Control package assemblies must be fully strong-name signed." />
+  </Target>
+</Project>

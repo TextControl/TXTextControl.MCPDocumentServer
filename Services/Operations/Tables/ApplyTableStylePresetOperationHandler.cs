@@ -58,22 +58,26 @@ public sealed class ApplyTableStylePresetOperationHandler : IDocumentOperationHa
             throw new ArgumentException("table style preset headerRowIndex must be >= 0.");
         }
 
-        var modelTable = TableOperationUtilities.GetModelTable(context.Document, tableId.ToString());
-        if (modelTable.Rows.Count == 0)
-        {
-            throw new InvalidOperationException($"Table '{tableId}' has no rows.");
-        }
-
-        if (preset.HeaderRowIndex >= modelTable.Rows.Count)
-        {
-            throw new ArgumentException("table style preset headerRowIndex is out of range for the target table.");
-        }
+        var modelTable = TableOperationUtilities.TryGetModelTable(context.Document, tableId.ToString());
+        int rowCount;
 
         if (context.TryGetTextControl(out var tx))
         {
-            for (var rowIndex = 0; rowIndex < modelTable.Rows.Count; rowIndex++)
+            var table = TableOperationUtilities.GetTxTable(tx, tableId);
+            rowCount = table.Rows.Count;
+            if (rowCount == 0)
             {
-                for (var columnIndex = 0; columnIndex < modelTable.Rows[rowIndex].Cells.Count; columnIndex++)
+                throw new InvalidOperationException($"Table '{tableId}' has no rows.");
+            }
+
+            if (preset.HeaderRowIndex >= rowCount)
+            {
+                throw new ArgumentException("table style preset headerRowIndex is out of range for the target table.");
+            }
+
+            for (var rowIndex = 0; rowIndex < rowCount; rowIndex++)
+            {
+                for (var columnIndex = 0; columnIndex < table.Columns.Count; columnIndex++)
                 {
                     var (textStyle, cellStyle) = ResolveCellStyles(preset, rowIndex);
                     if (textStyle is null && cellStyle is null)
@@ -81,7 +85,6 @@ public sealed class ApplyTableStylePresetOperationHandler : IDocumentOperationHa
                         continue;
                     }
 
-                    var table = TableOperationUtilities.GetTxTable(tx, tableId);
                     var cell = TableOperationUtilities.GetTxCell(table, rowIndex, columnIndex);
                     if (textStyle is not null)
                     {
@@ -93,14 +96,32 @@ public sealed class ApplyTableStylePresetOperationHandler : IDocumentOperationHa
 
                     if (cellStyle is not null)
                     {
-                        DocumentOperationFormatter.ApplyCellStyle(cell, cellStyle);
+                        DocumentOperationFormatter.ApplyCellStyle(tx, cell, cellStyle);
                     }
                 }
             }
         }
+        else
+        {
+            if (modelTable is null)
+            {
+                throw new InvalidOperationException($"Table '{tableId}' was not found in the document model.");
+            }
+
+            rowCount = modelTable.Rows.Count;
+            if (rowCount == 0)
+            {
+                throw new InvalidOperationException($"Table '{tableId}' has no rows.");
+            }
+
+            if (preset.HeaderRowIndex >= rowCount)
+            {
+                throw new ArgumentException("table style preset headerRowIndex is out of range for the target table.");
+            }
+        }
 
         var affectedCellIds = new List<string>();
-        for (var rowIndex = 0; rowIndex < modelTable.Rows.Count; rowIndex++)
+        for (var rowIndex = 0; modelTable is not null && rowIndex < modelTable.Rows.Count; rowIndex++)
         {
             var (textStyle, cellStyle) = ResolveCellStyles(preset, rowIndex);
             foreach (var cell in modelTable.Rows[rowIndex].Cells)
@@ -131,7 +152,7 @@ public sealed class ApplyTableStylePresetOperationHandler : IDocumentOperationHa
             {
                 ["tableId"] = tableId.ToString(),
                 ["styleName"] = preset.Name,
-                ["rowCount"] = modelTable.Rows.Count,
+                ["rowCount"] = rowCount,
                 ["cellIds"] = affectedCellIds
             }
         };

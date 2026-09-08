@@ -8,8 +8,14 @@ public sealed class Paragraph
     [JsonPropertyName("id")]
     public string Id { get; set; } = string.Empty;
 
+    [JsonPropertyName("role")]
+    public string? Role { get; set; }
+
     [JsonPropertyName("styleName")]
     public string? StyleName { get; set; }
+
+    [JsonPropertyName("text")]
+    public string? Text { get; set; }
 
     [JsonPropertyName("runs")]
     public List<Run> Runs { get; set; } = [];

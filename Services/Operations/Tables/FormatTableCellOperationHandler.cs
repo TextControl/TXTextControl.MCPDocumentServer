@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using TxTextControl.McpServer.Models.Requests;
 using TxTextControl.McpServer.Models.Responses;
 using TXTextControl;
@@ -14,15 +15,19 @@ public sealed class FormatTableCellOperationHandler : IDocumentOperationHandler
     {
         Type = TableCapabilityPack.FormatTableCell,
         CapabilityPack = TableCapabilityPack.PackName,
-        Description = "Applies text and/or cell formatting to one table cell.",
-        Intent = "Use for emphasizing a specific table cell without calculating text offsets.",
-        RequiredProperties = ["type", "tableId", "rowIndex", "columnIndex"],
-        OptionalProperties = ["style", "cellStyle"],
+        Description = "Applies text and/or cell formatting to one or more table cells resolved by coordinates, selected text, row, column, header, or table scope.",
+        Intent = "Use for table and cell formatting without calculating text offsets.",
+        RequiredProperties = ["type"],
+        OptionalProperties = ["tableId", "tableNumber", "tableScope", "rowIndex", "columnIndex", "matchText", "occurrenceIndex", "nearTextPosition", "selectionLength", "style", "cellStyle"],
         Properties = new()
         {
             ["tableId"] = "Existing table id.",
+            ["tableNumber"] = "One-based table number from get_document_tables; prefer this when imported tables have duplicate id values.",
             ["rowIndex"] = "Zero-based row index.",
             ["columnIndex"] = "Zero-based column index.",
+            ["tableScope"] = "cell (default), selectedCells, header, row, column, or table.",
+            ["matchText"] = "Selected text used to locate the authoritative TX table/cells.",
+            ["nearTextPosition"] = "Non-authoritative browser-position hint used to choose the closest table occurrence.",
             ["style"] = "Optional TextStyleDefinition to apply to the complete cell text. Use only when the user explicitly asks for cell text styling.",
             ["cellStyle"] = "Optional CellStyleDefinition for cell-level formatting, such as { backgroundColorHex: '#1F4E79', border: { width: 10, colorHex: '#000000' } }. Use only when the user explicitly asks for cell formatting."
         },
@@ -50,17 +55,17 @@ public sealed class FormatTableCellOperationHandler : IDocumentOperationHandler
             throw new ArgumentException("style or cellStyle is required.");
         }
 
-        var tableId = TableOperationUtilities.RequireTableId(operation.TableId);
-        var rowIndex = TableOperationUtilities.RequireIndex(operation.RowIndex, nameof(operation.RowIndex));
-        var columnIndex = TableOperationUtilities.RequireIndex(operation.ColumnIndex, nameof(operation.ColumnIndex));
-
-        if (context.TryGetTextControl(out var tx))
+        if (!context.TryGetTextControl(out var tx))
         {
-            var table = TableOperationUtilities.GetTxTable(tx, tableId);
-            var cell = TableOperationUtilities.GetTxCell(table, rowIndex, columnIndex);
+            return ApplyToModelOnly(context, operation, index);
+        }
+
+        List<ResolvedTableCell> targets = TableTargetUtilities.ResolveFormatTargets(tx, operation);
+        foreach (ResolvedTableCell target in targets)
+        {
             if (operation.Style is not null)
             {
-                cell.Select();
+                target.Cell.Select();
                 var selection = tx.Selection;
                 DocumentOperationFormatter.ApplyStyle(selection, operation.Style);
                 tx.Selection = selection;
@@ -68,10 +73,80 @@ public sealed class FormatTableCellOperationHandler : IDocumentOperationHandler
 
             if (operation.CellStyle is not null)
             {
-                DocumentOperationFormatter.ApplyCellStyle(cell, operation.CellStyle);
+                DocumentOperationFormatter.ApplyCellStyle(tx, target.Cell, operation.CellStyle);
             }
         }
 
+        var cellIds = new List<string>();
+        foreach (ResolvedTableCell target in targets)
+        {
+            var modelTable = TableOperationUtilities.TryGetModelTable(
+                context.Document,
+                target.Table.ID.ToString());
+            if (modelTable is null
+                || target.RowIndex >= modelTable.Rows.Count
+                || target.ColumnIndex >= modelTable.Rows[target.RowIndex].Cells.Count)
+            {
+                continue;
+            }
+
+            var modelCell = modelTable.Rows[target.RowIndex].Cells[target.ColumnIndex];
+            if (operation.Style is not null)
+            {
+                TableOperationUtilities.ApplyStyleToModelCell(modelCell, operation.Style);
+            }
+
+            if (operation.CellStyle is not null)
+            {
+                TableOperationUtilities.ApplyCellStyleToModelCell(modelCell, operation.CellStyle);
+            }
+
+            cellIds.Add(modelCell.Id);
+        }
+
+        string tableId = targets[0].Table.ID.ToString();
+        List<Dictionary<string, object?>> cells = targets
+            .Select(target => new Dictionary<string, object?>
+            {
+                ["rowIndex"] = target.RowIndex,
+                ["columnIndex"] = target.ColumnIndex,
+                ["start"] = target.Cell.Start - 1,
+                ["length"] = target.Cell.Length
+            })
+            .ToList();
+
+        return new OperationResult
+        {
+            Index = index,
+            Type = Type,
+            Detail = targets.Count == 1
+                ? $"Formatted table '{tableId}' cell ({targets[0].RowIndex}, {targets[0].ColumnIndex})."
+                : $"Formatted {targets.Count} cells in table '{tableId}'.",
+            TargetType = targets.Count == 1 ? "tableCell" : "tableCells",
+            TargetId = cellIds.Count == 1 ? cellIds[0] : null,
+            Location = $"tables['{tableId}']",
+            Metadata = new Dictionary<string, object?>
+            {
+                ["tableId"] = tableId,
+                ["tableNumber"] = targets[0].TableNumber,
+                ["tableScope"] = operation.TableScope ?? "cell",
+                ["cellCount"] = targets.Count,
+                ["cells"] = cells,
+                ["cellIds"] = cellIds,
+                ["hasTextStyle"] = operation.Style is not null,
+                ["hasCellStyle"] = operation.CellStyle is not null
+            }
+        };
+    }
+
+    private static OperationResult ApplyToModelOnly(
+        DocumentOperationContext context,
+        DocumentOperation operation,
+        int index)
+    {
+        var tableId = TableOperationUtilities.RequireTableId(operation.TableId);
+        var rowIndex = TableOperationUtilities.RequireIndex(operation.RowIndex, nameof(operation.RowIndex));
+        var columnIndex = TableOperationUtilities.RequireIndex(operation.ColumnIndex, nameof(operation.ColumnIndex));
         var modelTable = TableOperationUtilities.GetModelTable(context.Document, tableId.ToString());
         var modelCell = TableOperationUtilities.GetModelCell(modelTable, rowIndex, columnIndex);
         if (operation.Style is not null)
@@ -87,7 +162,7 @@ public sealed class FormatTableCellOperationHandler : IDocumentOperationHandler
         return new OperationResult
         {
             Index = index,
-            Type = Type,
+            Type = TableCapabilityPack.FormatTableCell,
             Detail = $"Formatted table '{tableId}' cell ({rowIndex}, {columnIndex}).",
             TargetType = "tableCell",
             TargetId = modelCell.Id,
@@ -98,6 +173,7 @@ public sealed class FormatTableCellOperationHandler : IDocumentOperationHandler
                 ["rowIndex"] = rowIndex,
                 ["columnIndex"] = columnIndex,
                 ["cellId"] = modelCell.Id,
+                ["cellCount"] = 1,
                 ["hasTextStyle"] = operation.Style is not null,
                 ["hasCellStyle"] = operation.CellStyle is not null
             }

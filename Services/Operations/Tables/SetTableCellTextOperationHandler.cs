@@ -56,9 +56,18 @@ public sealed class SetTableCellTextOperationHandler : IDocumentOperationHandler
                 context.GetDefaultParagraphStyleName());
         }
 
-        var modelTable = TableOperationUtilities.GetModelTable(context.Document, tableId.ToString());
-        var modelCell = TableOperationUtilities.GetModelCell(modelTable, rowIndex, columnIndex);
-        TableOperationUtilities.SetModelCellText(modelCell, text);
+        var modelTable = TableOperationUtilities.TryGetModelTable(context.Document, tableId.ToString());
+        var modelCell = modelTable is null
+            ? null
+            : TableOperationUtilities.GetModelCell(modelTable, rowIndex, columnIndex);
+        if (modelCell is not null)
+        {
+            TableOperationUtilities.SetModelCellText(modelCell, text);
+        }
+        else if (!context.TryGetTextControl(out _))
+        {
+            throw new InvalidOperationException($"Table '{tableId}' was not found in the document model.");
+        }
 
         return new OperationResult
         {
@@ -66,14 +75,14 @@ public sealed class SetTableCellTextOperationHandler : IDocumentOperationHandler
             Type = Type,
             Detail = $"Set table '{tableId}' cell ({rowIndex}, {columnIndex}).",
             TargetType = "tableCell",
-            TargetId = modelCell.Id,
+            TargetId = modelCell?.Id,
             Location = $"tables['{tableId}'].rows[{rowIndex}].cells[{columnIndex}]",
             Metadata = new Dictionary<string, object?>
             {
                 ["tableId"] = tableId.ToString(),
                 ["rowIndex"] = rowIndex,
                 ["columnIndex"] = columnIndex,
-                ["cellId"] = modelCell.Id,
+                ["cellId"] = modelCell?.Id,
                 ["textLength"] = text.Length
             }
         };

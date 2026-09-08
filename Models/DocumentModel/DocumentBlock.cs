@@ -5,6 +5,7 @@ namespace TxTextControl.McpServer.Models.DocumentModel;
 public sealed class DocumentBlock
 {
     [JsonPropertyName("type")]
+    [JsonRequired]
     public string Type { get; set; } = string.Empty;
 
     [JsonPropertyName("paragraph")]
